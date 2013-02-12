@@ -1,0 +1,130 @@
+#!/bin/bash
+# 2013 Angelo Olivera
+#
+# Automatic deployment of OpenStack nodes using Puppet
+#
+# Supported distributions: Ubuntu 12.04/12.10
+
+installpkg() {
+    if ! dpkg -s $1 &>/dev/null; then
+        aptitude -y install $1
+    fi
+}
+
+# Color escape codes
+RESTORE='\033[0m'
+RED='\033[00;31m'
+GREEN='\033[00;32m'
+YELLOW='\033[00;33m'
+
+msg() {
+    case "$1" in
+        error)  echo -ne "$RED";    echo "$0 error: ${@:2}";   echo -ne "$RESTORE"    >&2;;
+        warn)   echo -ne "$YELLOW"; echo "$0 warn: ${@:2}";    echo -ne "$RESTORE"    >&2;;
+        *)      echo -ne "$GREEN";  echo "$0 info: ${@}";    echo -ne "$RESTORE"    >&2;;
+    esac
+}
+
+hostname=$1
+controller_host=$2
+controller_ip=$3
+
+if ((UID!=0)); then
+    msg error "This script needs to be run as root"
+    exit 1
+fi
+
+if (($#<3)); then
+    msg error "Invalid command-line arguments"
+    msg warn ""
+    msg warn "usage: $0 hostname controller_host controller_ip"
+    msg warn ""
+    msg warn "     example $0 vpc-compute2.ec2.local vpc-controller.ec2.local 10.0.0.64"
+    msg warn ""
+    exit 1
+fi
+
+msg "Setting hostname: $hostname"
+hostname $hostname
+echo $(hostname) > /etc/hostname
+grep -q $hostname /etc/hosts || echo "127.0.0.1 $(hostname)" >> /etc/hosts
+grep -q $controller_host /etc/hosts || echo "$controller_ip $controller_host" >> /etc/hosts
+
+msg "Adding repository: PuppetLabs"
+if ! dpkg -s puppetlabs-release &>/dev/null; then
+    wget -nc -P /tmp http://apt.puppetlabs.com/puppetlabs-release-precise.deb
+    dpkg -i /tmp/puppetlabs-release-precise.deb
+fi
+
+msg "Adding repository: Ubuntu Cloud"
+installpkg ubuntu-cloud-keyring
+
+if [ ! -f /etc/apt/sources.list.d/ubuntu-cloud.list ]; then
+    cat > /etc/apt/sources.list.d/ubuntu-cloud.list << EOF
+# The primary updates archive that users should be using
+ 
+deb http://ubuntu-cloud.archive.canonical.com/ubuntu precise-updates/folsom main
+
+# Public -proposed archive mimicking the SRU process for extended testing.
+# Packages should bake here for at least 7 days. 
+#
+#deb  http://ubuntu-cloud.archive.canonical.com/ubuntu precise-proposed/folsom main
+EOF
+    aptitude update
+fi
+
+msg "Installing: git"
+installpkg git
+
+msg "Installing: puppet"
+installpkg puppet
+
+if [[ $hostname == $controller_host ]]; then
+    msg "Installing: puppetmaster"
+    installpkg puppetmaster
+fi
+
+msg "Installing Puppet modules: openstack"
+if  [ ! -d /etc/puppet/modules/openstack ]; then
+    puppet module install puppetlabs-openstack
+    mkdir -p /root/{src,backup}; cd /root/src
+    for service in mysql openstack keystone nova glance cinder horizon; do
+      git clone git://github.com/puppetlabs/puppetlabs-$service.git
+      mv -f /etc/puppet/modules/$service /root/backup
+      ln -svf $PWD/puppetlabs-$service /etc/puppet/modules/$service
+    done
+    chmod -R a+rX /root/src
+    chmod a+x /root
+    cd -
+fi
+
+msg "Configuring: Puppet agent"
+if ! grep -q $controller_host /etc/puppet/puppet.conf; then
+    cat >> /etc/puppet/puppet.conf << EOF
+[agent]
+server      = $controller_host
+EOF
+fi
+
+
+if [[ $controller_host == $hostname ]]; then
+    msg "Configuring: Puppet server"
+    curl https://raw.github.com/redondos/puppet-openstack-configure/master/site.pp > ~/site.pp
+    sed 's/^$controller_node_address.*/$controller_node_address = '"'$controller_host'/" site.pp > /etc/puppet/manifests/site.pp
+    sed -ie "s/^\$private_interface.*/\$private_interface = 'eth0'/" /etc/puppet/manifests/site.pp
+    # sed -ie 's/multi_host.*/multi_host => false,/' /etc/puppet/manifests/site.pp
+    
+    echo -e '*.local\n*.internal' > /etc/puppet/autosign.conf
+fi
+
+msg "Running puppet agent. This may take a while"
+time puppet agent -t
+
+if (($?==1)); then
+    msg error "Certificate needs to be signed on Puppet master:"
+    msg error "   puppet cert sign $hostname"
+    msg error "Then manually trigger update: \`puppet agent -t'"
+fi
+
+# vim: ts=4:sw=4:et
+
