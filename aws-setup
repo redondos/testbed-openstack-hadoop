@@ -1,0 +1,163 @@
+#!/usr/bin/env python
+# 2013 Angelo Olivera <aolivera@gmail.com>
+#
+## aws-vpc
+# - create a VPC (specified in the command-line)
+# - createa a subnet (half the size of the VPC)
+# - create and attach an internet gateway 
+# TODO: route tables, elastic ips, security groups,
+#       instance creation
+
+import sys, os
+from boto.vpc import VPCConnection
+
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    RED = '\033[00;31m'
+    GREEN='\033[00;32m'
+    YELLOW='\033[00;33m'
+
+
+    def disable(self):
+        self.HEADER = ''
+        self.OKBLUE = ''
+        self.OKGREEN = ''
+        self.WARNING = ''
+        self.FAIL = ''
+        self.ENDC = ''
+
+def error(msg):
+    print bcolors.RED + msg + bcolors.ENDC
+
+def warn(msg):
+    print bcolors.YELLOW + msg + bcolors.ENDC
+
+def info(msg):
+    print bcolors.GREEN + msg + bcolors.ENDC
+
+def msg(msg):
+    print msg
+
+
+def usage():
+    msg("error", "usage: {} VPC-IP".format(sys.argv[0]))
+    msg("error", "  e.g. {} 10.0.0.0/24".format(sys.argv[0]))
+    sys.exit(1)
+
+
+def vpc_info(vpc):
+    info("id:   {}", vpc.id)
+    info("cidr  {}", vpc.cidr_block)
+    info("region {}", vpc.region)
+
+def awserror(reason, exit=10):
+    error("Could not " + reason + ". Check AWS Console: https://console.aws.amazon.com/vpc/")
+    sys.exit(exit)
+
+def check_vpc(connection, vpc_ip):
+    for v in connection.get_all_vpcs():
+        if v.cidr_block == vpc_ip:
+            return v
+
+def check_subnet(connection, vpc, subnet_ip):
+    for s in connection.get_all_subnets():
+        if s.vpc_id == vpc.id:
+            if s.cidr_block == subnet_ip:
+                return s
+
+def check_igw(connection, vpc):
+    for g in connection.get_all_internet_gateways():
+        for a in g.attachments:
+            if a.vpc_id == vpc.id:
+                return g
+
+def check_free_igw(connection, vpc):
+    has_attachment = False
+    for g in connection.get_all_internet_gateways():
+        if len(g.attachments)==0:
+            # igw is free, let's use it
+            return g
+
+def main():
+
+    if len(sys.argv)<2:
+        usage()
+
+    # Set VPC IP and CIDR subnet from command line
+    vpc_ip = sys.argv[1]
+    vpc_base = vpc_ip[:vpc_ip.rfind('/')]
+    vpc_size = vpc_ip[vpc_ip.rfind('/')+1:]
+
+    # Create connection with AWS
+    c = VPCConnection(os.environ['AWS_ACCESS_KEY'], os.environ['AWS_SECRET_KEY'])
+
+    # Check if there's already a VPC using the specified subnet
+    vpc = check_vpc(c, vpc_ip)
+    if vpc:
+        info("Found a VPC on the same subnet ({}): {}".format(vpc_ip, vpc.id))
+        # FIXME: TypeError: info() takes exactly 1 argument (2 given)
+        # vpc_info(i)
+        answer = raw_input("Should we use it? Y/n ")
+        if answer.lower() == "n" or answer.lower() == "no":
+            warn("Not reusing existing VPC")
+            vpc_found = False
+            vpc = ''
+        else:
+            warn("Reusing existing VPC: {}".format(vpc.id))
+
+    if not vpc: # VPC doesn't exist, create one
+        try:
+            vpc = c.create_vpc(vpc_ip)
+            info("Created VPC: " + vpc.id)
+        except Exception, e:
+            error( "".join(e[2]))
+            awserror("create VPC")
+
+    # Check if subnet exists
+    subnet_ip=str(vpc_base) + '/' + str(int(vpc_size)+1)
+    subnet = check_subnet(c, vpc, subnet_ip)
+
+    if subnet:
+        warn("Reusing existing subnet: {}".format(subnet.id))
+    else: 
+        try:
+            # Subnet doesn't exist, create one
+            subnet = c.create_subnet(vpc.id, subnet_ip)
+            info("Created subnet: " + subnet.cidr_block)
+        except Exception, e:
+            error( "".join(e[2]))
+            awserror("create subnet")
+
+    # Check if Internet Gateway exists for VPC
+    igw = check_igw(c, vpc)
+    if igw:
+        warn("Found Internet Gateway for VPC: {}".format(igw.id))
+    else:
+        # Check if there is a free igw and if so, attach vpc
+        igw = check_free_igw(c, vpc)
+        if igw:
+            try:
+                attachment = c.attach_internet_gateway(igw.id, vpc.id)
+                info("Found free internet gateway, attaching to vpc: " + igw.id)
+            except Exception, e:
+                error( "".join(e[2]))
+                awserror("attach internet gateway")
+        else:
+            try:
+                # Try to create a new igw
+                igw = c.create_internet_gateway()
+                info("Created Internet Gateway: " + str(igw))
+                attachment = c.attach_internet_gateway(igw.id, vpc.id)
+                info("Attached igw to vpc: " + str(attachment))
+            except Exception, e:
+                # Couldn't find unused igw nor create a new one, exit
+                error( "".join(e[2]))
+                awserror("create or attach internet gateway")
+
+if __name__ == "__main__":
+    main()
