@@ -5,7 +5,8 @@
 # - create a VPC (specified in the command-line)
 # - createa a subnet (half the size of the VPC)
 # - create and attach an internet gateway 
-# TODO: elastic ips, instance creation
+# - create controller and compute instance
+# TODO: elastic ips, flexible number of nodes
 
 import sys, os
 from boto.vpc import VPCConnection
@@ -20,7 +21,6 @@ class bcolors:
     RED = '\033[00;31m'
     GREEN='\033[00;32m'
     YELLOW='\033[00;33m'
-
 
     def disable(self):
         self.HEADER = ''
@@ -42,12 +42,10 @@ def info(msg):
 def msg(msg):
     print msg
 
-
 def usage():
     error("usage: {} VPC-IP".format(sys.argv[0]))
     error("  e.g. {} 10.0.0.0/24".format(sys.argv[0]))
     sys.exit(1)
-
 
 def vpc_info(vpc):
     info("id:   " + vpc.id)
@@ -115,8 +113,7 @@ def main():
     # Check if there's already a VPC using the specified subnet
     vpc = check_vpc(c, vpc_ip)
     if vpc:
-        info("Found a VPC on the same subnet ({}):".format(vpc_ip))
-        # FIXME: TypeError: info() takes exactly 1 argument (2 given)
+        info("Found a VPC with the same subnet ({}):".format(vpc_ip))
         vpc_info(vpc)
         answer = raw_input("OK to reuse it? Y/n ")
         if answer.lower() == "n" or answer.lower() == "no":
@@ -125,9 +122,9 @@ def main():
             vpc = ''
         else:
             warn("Reusing existing VPC: {}".format(vpc.id))
-
-    if not vpc: # VPC doesn't exist, create one
+    else:
         try:
+            # VPC doesn't exist, create one
             vpc = c.create_vpc(vpc_ip)
             info("Created VPC: " + vpc.id)
         except Exception, e:
@@ -167,7 +164,7 @@ def main():
             try:
                 # Try to create a new igw
                 igw = c.create_internet_gateway()
-                info("Created internet gateway: " + str(igw))
+                info("Created internet gateway: " + igw.id)
                 attachment = c.attach_internet_gateway(igw.id, vpc.id)
                 info("Attached igw to vpc: " + str(attachment))
             except Exception, e:
@@ -175,6 +172,7 @@ def main():
                 error( "".join(e[2]))
                 awserror("create or attach internet gateway")
 
+    # No error checking, assume it exists since it is created with each VPC
     routing_table = find_routing_table(c, vpc)
 
     # Create default route (via the internet gateway) if it doesn't exist already
@@ -196,8 +194,11 @@ def main():
             sg.authorize('icmp', -1, -1, '0.0.0.0/0', )
             info("Allowing incoming ICMP connections")
         except:
-            warn("Found firewall rules in security group: " + sg.id)
-            warn("Skipping.")
+            warn("Found firewall rules in security group: " + sg.id + ". Skipping")
+
+    # Run instances in VPC
+    controller = c.run_instances('ami-3d4ff254', subnet_id=subnet.id, key_name='redondos', instance_type='m1.medium')
+    compute1 = c.run_instances('ami-3d4ff254', subnet_id=subnet.id, key_name='redondos', instance_type='m1.medium')
 
 if __name__ == "__main__":
     main()
