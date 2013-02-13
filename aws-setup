@@ -3,14 +3,15 @@
 #
 # aws-setup
 # - create a VPC (specified in the command-line)
-# - createa a subnet (half the size of the VPC)
+# - create a subnet (half the size of the VPC)
 # - create and attach an internet gateway 
-# - create controller and compute instance
-# TODO: elastic ips, flexible number of nodes
+# - create controller and compute instances
+# TODO: elastic ips
 
 import sys, os
 from boto.vpc import VPCConnection
 from optparse import OptionParser
+import traceback
 
 class bcolors:
     HEADER = '\033[95m'
@@ -111,6 +112,10 @@ def main():
                         help="name of ssh key to use (it has to exist in EC2) "
                         "       default: openstack" )
 
+    parser.add_option("-f", "--flavor", dest="flavor", default="t1.micro", metavar="FLAVOR",
+                        help="instance type: t1.micro, m1.medium, m3.xlarge, etc. "
+                        "       default: t1.micro" )
+
     (options, args) = parser.parse_args()
 
     vpc_ip = options.subnet
@@ -119,7 +124,8 @@ def main():
         "       subnet:     {}\n"
         "       ssh key:    {}\n"
         "       instances:  {}\n"
-        .format(sys.argv[0][2:], options.subnet, options.ssh_key, options.instances))
+        "       flavor:     {}\n"
+        .format(sys.argv[0][2:], options.subnet, options.ssh_key, options.instances, options.flavor))
 
     answer = raw_input("Continue? Y/n")
     if answer.lower() == "n" or answer.lower() == "no":
@@ -146,16 +152,12 @@ def main():
     # Check if there's already a VPC using the specified subnet
     vpc = check_vpc(c, vpc_ip)
     if vpc:
-        info("Found a VPC with the same subnet ({}):".format(vpc_ip))
+        info("Found VPC".format(vpc_ip))
         vpc_info(vpc)
         answer = raw_input("OK to reuse it? Y/n ")
-        if answer.lower() == "n" or answer.lower() == "no":
-            warn("Not reusing existing VPC")
-        else:
-            warn("Reusing existing VPC: {}".format(vpc.id))
-    if not vpc:
+    if not vpc or answer.lower() == "n" or answer.lower() == "no":
         try:
-            # VPC doesn't exist, create one
+            # VPC doesn't exist or user chose not to reuse, create one
             vpc = c.create_vpc(vpc_ip)
             info("Created VPC: " + vpc.id)
         except Exception, e:
@@ -164,8 +166,8 @@ def main():
 
     # Check if subnet exists
     subnet_ip=str(vpc_base) + '/' + str(int(vpc_size)+1)
-    if vpc:
-        subnet = check_subnet(c, vpc, subnet_ip)
+    subnet = check_subnet(c, vpc, subnet_ip)
+    if subnet:
         warn("Reusing existing subnet: {}".format(subnet.id))
     else: 
         try:
@@ -229,11 +231,22 @@ def main():
     # Run instances in VPC
     ec2 = {} # dictionary of instances
     if options.instances >= 2:
-        ec2[0] = c.run_instances('ami-3d4ff254', subnet_id=subnet.id, key_name=options.ssh_key, instance_type='m1.medium')
-        if ec2[0]: info("Created controller instance: {}".format(ec2[0].id))
-        for node in xrange(1, options.instances):
-            ec2[node] = c.run_instances('ami-3d4ff254', subnet_id=subnet.id, key_name=options.ssh_key, instance_type='m1.medium')
-            if ec2[node]: info("Created compute instance: {}".format(ec2[node].id))
-
+        try:
+            ec2[0] = c.run_instances('ami-3d4ff254', subnet_id=subnet.id, key_name=options.ssh_key, instance_type=options.flavor)
+        except:
+            error("Could not create controller instance.")
+            print traceback.format_exc().split('\n')[-2]
+            sys.exit(1)
+        info("Created controller instance: {}".format(ec2[0].instances[0].id))
+        
+        for node in xrange(1, int(options.instances)):
+            try:
+                ec2[node] = c.run_instances('ami-3d4ff254', subnet_id=subnet.id, key_name=options.ssh_key, instance_type=options.flavor)
+            except:
+                error("Could not create compute{} instance".format(node))
+                print traceback.format_exc().split('\n')[-2]
+                sys.exit(1)
+            info("Created compute{} instance: {}".format(node, ec2[node].instances[0].id))
 if __name__ == "__main__":
     main()
+
