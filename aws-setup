@@ -4,11 +4,11 @@
 # aws-setup
 # - create a VPC (specified in the command-line)
 # - create a subnet (half the size of the VPC)
-# - create and attach an internet gateway 
+# - create and attach an internet gateway to vpc
 # - create controller and compute instances
-# TODO: elastic ips
+# - create and attach elastic ip to controller
 
-import sys, os
+import sys, os, time
 from boto.vpc import VPCConnection
 from optparse import OptionParser
 import traceback
@@ -95,7 +95,31 @@ def find_security_group(connection, vpc):
     for sg in connection.get_all_security_groups():
         if sg.vpc_id == vpc.id:
             return sg
-            
+
+def find_elastic_ip(connection):
+    for ip in connection.get_all_addresses():
+        if ip.domain == "vpc":
+            if not ip.association_id:
+                return ip
+
+def attach_ip(connection, instance_id, ip, wait):
+    attached = False
+    while not attached:
+        try:
+            attached = connection.associate_address(instance_id, None, ip.allocation_id)
+        except:
+            sys.stdout.write('.')
+            sys.stdout.flush()
+            time.sleep(2)
+            wait -= 2
+            if wait == 0:
+                sys.stdout.write('\n')
+                error(traceback.format_exc().split('\n')[-2])
+                break
+    sys.stdout.write('\n')
+    sys.stdout.flush()
+    return attached
+
 def main():
 
     parser = OptionParser()
@@ -247,6 +271,25 @@ def main():
                 print traceback.format_exc().split('\n')[-2]
                 sys.exit(1)
             info("Created compute{} instance: {}".format(node, ec2[node].instances[0].id))
+
+        ip = find_elastic_ip(c)
+        if ip:
+            warn("Found free Elastic IP: {}".format(ip.public_ip))
+            answer = raw_input("OK to reuse it? Y/n ")
+        if not ip or answer.lower() == "n" or answer.lower() == "no":
+            try:
+                ip = c.allocate_address("vpc")
+            except:
+                error("Could not allocate new Elastic IP")
+                print traceback.format_exc().split('\n')[-2] 
+                sys.exit(1)
+            warn("Allocated Elastic IP: {}".format(ip.public_ip))
+
+        warn("Waiting for controller to spawn to attach IP")
+        if not attach_ip(c, ec2[0].instances[0].id, ip, 120):
+            error("Timeout reached while trying to attach Elastic IP. Aborting.")
+        info("Attached Elastic IP")
+                    
 if __name__ == "__main__":
     main()
 
