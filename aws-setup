@@ -1,12 +1,11 @@
 #!/usr/bin/env python
 # 2013 Angelo Olivera <aolivera@gmail.com>
 #
-## aws-vpc
+# aws-setup
 # - create a VPC (specified in the command-line)
 # - createa a subnet (half the size of the VPC)
 # - create and attach an internet gateway 
-# TODO: route tables, elastic ips, security groups,
-#       instance creation
+# TODO: elastic ips, instance creation
 
 import sys, os
 from boto.vpc import VPCConnection
@@ -45,15 +44,15 @@ def msg(msg):
 
 
 def usage():
-    msg("error", "usage: {} VPC-IP".format(sys.argv[0]))
-    msg("error", "  e.g. {} 10.0.0.0/24".format(sys.argv[0]))
+    error("usage: {} VPC-IP".format(sys.argv[0]))
+    error("  e.g. {} 10.0.0.0/24".format(sys.argv[0]))
     sys.exit(1)
 
 
 def vpc_info(vpc):
-    info("id:   {}", vpc.id)
-    info("cidr  {}", vpc.cidr_block)
-    info("region {}", vpc.region)
+    info("id:   " + vpc.id)
+    info("cidr: " + vpc.cidr_block)
+    info("region: "+ vpc.region.name)
 
 def awserror(reason, exit=10):
     error("Could not " + reason + ". Check AWS Console: https://console.aws.amazon.com/vpc/")
@@ -83,6 +82,23 @@ def check_free_igw(connection, vpc):
             # igw is free, let's use it
             return g
 
+def find_routing_table(connection, vpc):
+    for rt in connection.get_all_route_tables():
+        if rt.vpc_id == vpc.id:
+            return rt
+
+def check_default_route(connection, vpc, rt):
+    for r in rt.routes:
+        if r.destination_cidr_block == '0.0.0.0/0':
+            return True
+    return False
+
+def find_security_group(connection, vpc):
+    for sg in connection.get_all_security_groups():
+        if sg.vpc_id == vpc.id:
+            return sg
+            
+
 def main():
 
     if len(sys.argv)<2:
@@ -99,10 +115,10 @@ def main():
     # Check if there's already a VPC using the specified subnet
     vpc = check_vpc(c, vpc_ip)
     if vpc:
-        info("Found a VPC on the same subnet ({}): {}".format(vpc_ip, vpc.id))
+        info("Found a VPC on the same subnet ({}):".format(vpc_ip))
         # FIXME: TypeError: info() takes exactly 1 argument (2 given)
-        # vpc_info(i)
-        answer = raw_input("Should we use it? Y/n ")
+        vpc_info(vpc)
+        answer = raw_input("OK to reuse it? Y/n ")
         if answer.lower() == "n" or answer.lower() == "no":
             warn("Not reusing existing VPC")
             vpc_found = False
@@ -136,7 +152,7 @@ def main():
     # Check if Internet Gateway exists for VPC
     igw = check_igw(c, vpc)
     if igw:
-        warn("Found Internet Gateway for VPC: {}".format(igw.id))
+        warn("Found internet gateway for VPC: {}".format(igw.id))
     else:
         # Check if there is a free igw and if so, attach vpc
         igw = check_free_igw(c, vpc)
@@ -151,13 +167,37 @@ def main():
             try:
                 # Try to create a new igw
                 igw = c.create_internet_gateway()
-                info("Created Internet Gateway: " + str(igw))
+                info("Created internet gateway: " + str(igw))
                 attachment = c.attach_internet_gateway(igw.id, vpc.id)
                 info("Attached igw to vpc: " + str(attachment))
             except Exception, e:
                 # Couldn't find unused igw nor create a new one, exit
                 error( "".join(e[2]))
                 awserror("create or attach internet gateway")
+
+    routing_table = find_routing_table(c, vpc)
+
+    # Create default route (via the internet gateway) if it doesn't exist already
+    if check_default_route(c, vpc, routing_table):
+        warn("Found default route")
+    else:
+        route = c.create_route(routing_table.id, "0.0.0.0/0", igw.id)
+        info("Added default route")
+        
+    # Allow all incoming tcp connections
+    # FIXME: only allow known ports (ssh, apache/horizon, etc)
+    sg = find_security_group(c, vpc)
+    if sg:
+        try:
+            sg.authorize('tcp', 0, 65535, '0.0.0.0/0', )
+            info("Allowing incoming TCP connections")
+            sg.authorize('udp', 0, 65535, '0.0.0.0/0', )
+            info("Allowing incoming UDP connections")
+            sg.authorize('icmp', -1, -1, '0.0.0.0/0', )
+            info("Allowing incoming ICMP connections")
+        except:
+            warn("Found firewall rules in security group: " + sg.id)
+            warn("Skipping.")
 
 if __name__ == "__main__":
     main()
