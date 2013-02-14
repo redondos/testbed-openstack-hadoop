@@ -120,10 +120,12 @@ fi
 msg "Running puppet agent. This may take a while"
 time puppet agent -t
 
-if (($?==1)); then
-    msg error "Certificate needs to be signed on Puppet master:"
+if (($?!=0)); then
+    msg error "Error running Puppet agent. If it is certificate-related, run from Puppet master:"
     msg error "   puppet cert sign $hostname"
     msg error "Then manually trigger update: \`puppet agent -t'"
+    msg info "Certificate signatures aren't needed if the client has a fully qualified domain name"
+    msg info "e.g. openstack-compute1.ec2.internal"
 fi
 
 # vim: ts=4:sw=4:et
