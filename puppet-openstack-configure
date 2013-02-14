@@ -17,12 +17,26 @@ RED='\033[00;31m'
 GREEN='\033[00;32m'
 YELLOW='\033[00;33m'
 
+# only output colors if stdout/stderr is a tty
+test -t 1 && COLORS_STDOUT=1
+test -t 2 && COLORS_STDERR=1
+
 msg() {
+# prints info/warn/error messages in colors if output is to a tty
+
     case "$1" in
-        error)  echo -ne "$RED";    echo "$0 error: ${@:2}";   echo -ne "$RESTORE"    >&2;;
-        warn)   echo -ne "$YELLOW"; echo "$0 warn: ${@:2}";    echo -ne "$RESTORE"    >&2;;
-        *)      echo -ne "$GREEN";  echo "$0 info: ${@}";    echo -ne "$RESTORE"    >&2;;
+        error)  ((COLORS_STDERR)) && echo -ne "$RED"    >&2
+                echo "$0 error: ${@:2}"                 >&2
+                ;;
+        warn)   ((COLORS_STDERR)) && echo -ne "$YELLOW" >&2
+                echo "$0 warn: ${@:2}"                  >&2
+                ;;
+        *)      ((COLORS_STDOUT)) && echo -ne "$GREEN"
+                echo "$0 info: ${@}"
     esac
+    # restore normal colors
+    ((COLORS_STDOUT)) && echo -ne "$RESTORE"
+    ((COLORS_STDERR)) && echo -ne "$RESTORE" >&2
 }
 
 hostname=$1
