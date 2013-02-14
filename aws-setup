@@ -2,6 +2,7 @@
 # 2013 Angelo Olivera <aolivera@gmail.com>
 #
 # aws-setup
+# - generate an SSH keypair if needed
 # - create a VPC (specified in the command-line)
 # - create a subnet (half the size of the VPC)
 # - create and attach an internet gateway to vpc
@@ -53,7 +54,7 @@ def awserror(reason, exit=10):
     error("Could not " + reason + ". Check AWS Console: https://console.aws.amazon.com/vpc/")
     sys.exit(exit)
 
-def check_keypair(connection, key):
+def check_key_pair(connection, key):
     return any("KeyPair:"+key in str(s) for s in connection.get_all_key_pairs())
 
 def check_vpc(connection, vpc_ip):
@@ -168,10 +169,25 @@ def main():
         sys.exit(1)
         
     # Check if key exists
-    if not check_keypair(c, options.ssh_key):
-        error("Could not find SSH key '{}' in AWS.".format(options.ssh_key))
-        warn("To generate a keypair, use `ssh-keygen' visit https://console.aws.amazon.com/ec2/home#s=KeyPairs ")
-        sys.exit(1)
+    if check_key_pair(c, options.ssh_key):
+        info("SSH key found in AWS: '{}'.".format(options.ssh_key))
+    else:
+        warn("SSH key not found in AWS: '{}'. Creating one...".format(options.ssh_key))
+        try:
+            kp = c.create_key_pair(options.ssh_key)
+        except:
+            error("Could not generate SSH keypair in AWS.")
+            print traceback.format_exc().split('\n')[-2]
+            sys.exit(1)
+        filename = options.ssh_key + ".pub"
+        try:
+            f = open(filename, 'w')
+            f.write(kp.material)
+            f.close()
+        except:
+            error("Could not write SSH key to {}/{}".format(os.getcwd(), options.ssh_key))
+            sys.exit(1)
+        warn("SSH key saved in current directory: {}/{}.pub".format(os.getcwd(), options.ssh_key))
 
     # Check if there's already a VPC using the specified subnet
     vpc = check_vpc(c, vpc_ip)
