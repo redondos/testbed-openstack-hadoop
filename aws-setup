@@ -257,14 +257,15 @@ def main():
     # Allow all incoming tcp connections
     # FIXME: only allow known ports (ssh, apache/horizon, etc)
     sg = find_security_group(c, vpc)
+    info("Using security group: " + sg.id)
     if sg:
         try:
-            sg.authorize('tcp', 0, 65535, '0.0.0.0/0', )
             info("Allowing incoming TCP connections")
-            sg.authorize('udp', 0, 65535, '0.0.0.0/0', )
+            c.authorize_security_group(None, None, None, "tcp", 0, 65535, "0.0.0.0/0", sg.id)
             info("Allowing incoming UDP connections")
-            sg.authorize('icmp', -1, -1, '0.0.0.0/0', )
+            c.authorize_security_group(None, None, None, "udp", 0, 65535, "0.0.0.0/0", sg.id)
             info("Allowing incoming ICMP connections")
+            c.authorize_security_group(None, None, None, "icmp", -1, -1, "0.0.0.0/0", sg.id)
         except:
             warn("Found firewall rules in security group: " + sg.id + ". Skipping")
 
