@@ -134,7 +134,7 @@ def main():
                         "       default: 2")
 
     parser.add_option("-k", "--key", dest="ssh_key", default="openstack", metavar="KEY",
-                        help="name of ssh key to use (it has to exist in EC2) "
+                        help="name of ssh key. it will be created if it doesn't exist "
                         "       default: openstack" )
 
     parser.add_option("-f", "--flavor", dest="flavor", default="t1.micro", metavar="FLAVOR",
@@ -296,7 +296,7 @@ def main():
             try:
                 ip = c.allocate_address("vpc")
             except:
-                error("Could not allocate new Elastic IP")
+                error("Could not allocate Elastic IP")
                 print traceback.format_exc().split('\n')[-2] 
                 sys.exit(1)
             warn("Allocated Elastic IP: {}".format(ip.public_ip))
