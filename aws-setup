@@ -46,9 +46,8 @@ def msg(msg):
     print msg
 
 def vpc_info(vpc):
-    info("vpc id:   " + vpc.id)
-    info("cidr: " + vpc.cidr_block)
-    info("region: "+ vpc.region.name)
+    return "vpc id: {}\nregion: {}\n".format(vpc.id, vpc.region.name)
+    return out
 
 def awserror(reason, exit=10):
     error("Could not " + reason + ". Check AWS Console: https://console.aws.amazon.com/vpc/")
@@ -124,39 +123,53 @@ def attach_ip(connection, instance_id, ip, wait):
 def main():
 
     parser = OptionParser()
+    parser.add_option("-n", "--name", dest="testbed_name", default="testbed", metavar="TESTBED",
+                        help="testbed name"
+                        '       default: "testbed"' )
+
     parser.add_option("-s", "--subnet", dest="subnet", default="10.0.0.0/24", metavar="SUBNET", 
                         help="subnet to use for Amazon VPC, in CIDR notation  "
-                        "       default: 10.0.0.0/24")
-
-    parser.add_option("-n", "--instances", dest="instances", default=2, metavar="INSTANCES",
-                        help="number of instances to spawn.                 "
-                        "       if set to 1, a single node setup will be used."
-                        "       default: 2")
+                        '       default: "10.0.0.0/24"')
 
     parser.add_option("-k", "--key", dest="ssh_key", default="openstack", metavar="KEY",
-                        help="name of ssh key. it will be created if it doesn't exist "
-                        "       default: openstack" )
+                        help="name of ssh key. it will be created if not nonexistent    "
+                        '       default: "openstack"' )
 
     parser.add_option("-f", "--flavor", dest="flavor", default="t1.micro", metavar="FLAVOR",
                         help="instance type: t1.micro, m1.medium, m3.xlarge, etc. "
-                        "       default: t1.micro" )
+                        '       default: "t1.micro"' )
+
+    parser.add_option("-i", "--instances", dest="instances", default=2, metavar="INSTANCES",
+                        help="number of instances to spawn.                 "
+                        "       if set to 1, a single node setup will be used."
+                        '       default: 2')
+
+    parser.add_option("-y", "--yes", action="store_true", dest="yes", default=False,
+                        help="answer yes to all questions              "
+                        "       default: unset")
 
     (options, args) = parser.parse_args()
 
+    # global variables
     vpc_ip = options.subnet
+    desc_file = options.testbed_name + ".desc"
+    answer = "yes"
 
-    info("{}:\n"
-        "       subnet:     {}\n"
-        "       ssh key:    {}\n"
-        "       instances:  {}\n"
-        "       flavor:     {}\n"
-        .format(sys.argv[0][2:], options.subnet, options.ssh_key, options.instances, options.flavor))
+    out = "name: {}\n".format(options.testbed_name)   +\
+          "subnet: {}\n".format(options.subnet)       +\
+          "ssh_key: {}\n".format(options.ssh_key)     +\
+          "flavor: {}\n".format(options.flavor)       +\
+          "instances: {}\n".format(options.instances)
 
-    answer = raw_input("Continue? Y/n")
-    if answer.lower() == "n" or answer.lower() == "no":
-        warn("Cancelling...")
-        sys.exit(0)
+    info("{}: writing description to {}\n\n".format(sys.argv[0][2:], desc_file) + out)
 
+    f = open(desc_file, 'w')
+    f.write(out)
+    if not options.yes:
+        answer = raw_input("Continue? Y/n")
+        if answer.lower() == "n" or answer.lower() == "no":
+            warn("Cancelling...")
+            sys.exit(0)
     # Set VPC IP and CIDR subnet from command line
     vpc_base = vpc_ip[:vpc_ip.rfind('/')]
     vpc_size = vpc_ip[vpc_ip.rfind('/')+1:]
@@ -187,14 +200,19 @@ def main():
         except:
             error("Could not write SSH key to {}/{}".format(os.getcwd(), options.ssh_key))
             sys.exit(1)
-        warn("SSH key saved in current directory: {}/{}.pub".format(os.getcwd(), options.ssh_key))
+        warn("SSH key saved in current directory: {}/{}.pub".format(options.ssh_key))
 
     # Check if there's already a VPC using the specified subnet
     vpc = check_vpc(c, vpc_ip)
     if vpc:
         info("Found VPC".format(vpc_ip))
-        vpc_info(vpc)
-        answer = raw_input("OK to reuse it? Y/n ")
+        out = vpc_info(vpc)
+        info(out)
+        f.write(out)
+        answer = "y"
+        if not options.yes:
+            answer = raw_input("OK to reuse it? Y/n ")
+
     if not vpc or answer.lower() == "n" or answer.lower() == "no":
         try:
             # VPC doesn't exist or user chose not to reuse, create one
@@ -214,6 +232,7 @@ def main():
             # Subnet doesn't exist, create one
             subnet = c.create_subnet(vpc.id, subnet_ip)
             info("Created subnet: " + subnet.cidr_block)
+            f.write("subnet: {}\n".format(subnet.cidr_block))
         except Exception, e:
             error( "".join(e[2]))
             awserror("create subnet")
@@ -243,9 +262,12 @@ def main():
                 # Couldn't find unused igw nor create a new one, exit
                 error( "".join(e[2]))
                 awserror("create or attach internet gateway")
+        f.write("internet_gateway: {}\n".format(igw.id))
 
     # No error checking, assume it exists since it is created with each VPC
     routing_table = find_routing_table(c, vpc)
+    info("Using routing table: " + routing_table.id)
+    f.write("routing_table: {}\n".format(routing_table.id))
 
     # Create default route (via the internet gateway) if it doesn't exist already
     if check_default_route(c, vpc, routing_table):
@@ -258,6 +280,7 @@ def main():
     # FIXME: only allow known ports (ssh, apache/horizon, etc)
     sg = find_security_group(c, vpc)
     info("Using security group: " + sg.id)
+    f.write("security_group: {}\n".format(sg.id))
     if sg:
         try:
             info("Allowing incoming TCP connections")
@@ -278,7 +301,10 @@ def main():
             error("Could not create controller instance.")
             print traceback.format_exc().split('\n')[-2]
             sys.exit(1)
-        info("Created controller instance: {}".format(ec2[0].instances[0].id))
+        controller = ec2[0].instances[0]
+        info("Created controller instance: {}".format(controller.id))
+        f.write("controller.id: {}\n".format(controller.id))
+        f.write("controller.private_ip: {}\n" + controller.private_ip_address)
         
         for node in xrange(1, int(options.instances)):
             try:
@@ -287,12 +313,17 @@ def main():
                 error("Could not create compute{} instance".format(node))
                 print traceback.format_exc().split('\n')[-2]
                 sys.exit(1)
-            info("Created compute{} instance: {}".format(node, ec2[node].instances[0].id))
+            compute = ec2[node].instances[0]
+            info("Created compute{} instance: {}".format(node, compute.id))
+            f.write("compute{}.id: {}\n".format(node, compute.id))
+            f.write("compute{}.private_ip: {} \n".format(node, compute.private_ip_address))
 
         ip = find_elastic_ip(c)
         if ip:
             warn("Found free Elastic IP: {}".format(ip.public_ip))
-            answer = raw_input("OK to reuse it? Y/n ")
+            answer = "y"
+            if not options.yes:
+                answer = raw_input("OK to reuse it? Y/n ")
         if not ip or answer.lower() == "n" or answer.lower() == "no":
             try:
                 ip = c.allocate_address("vpc")
@@ -306,6 +337,9 @@ def main():
         if not attach_ip(c, ec2[0].instances[0].id, ip, 120):
             error("Timeout reached while trying to attach Elastic IP. Aborting.")
         info("Attached Elastic IP")
+        f.write("controller.elastic_ip: {}\n".format(ip.public_ip))
+
+    f.close()
                     
 if __name__ == "__main__":
     main()
