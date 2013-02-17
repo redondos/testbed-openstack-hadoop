@@ -316,6 +316,10 @@ def main():
         controller.modify_attribute("sourceDestCheck", "false")
         info("Disabled source/destination check for controller instance")
 
+        # Create a name tag for controller
+        tags = {}
+        tags["Name"] = options.testbed_name + "-controller"
+        c.create_tags([controller.id], tags)
 
         for node in xrange(1, int(options.instances)):
             try:
@@ -328,6 +332,10 @@ def main():
             info("Created compute{} instance: {}".format(node, compute.id))
             f.write("compute{}.id={}\n".format(node, compute.id))
             f.write("compute{}.private_ip={} \n".format(node, compute.private_ip_address))
+
+            # Create name tags for nodes
+            tags["Name"] = options.testbed_name + "-compute" + str(node)
+            c.create_tags([compute.id], tags)
 
         ip = find_elastic_ip(c)
         if ip:
