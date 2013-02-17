@@ -1,0 +1,222 @@
+#!/bin/bash
+# 2013 Angelo Olivera
+#
+# Set up remote nodes using puppet-openstack-configure
+#
+
+# kill children if script was interrupted
+trap 'echo killing ${pids[@]}; kill ${pids[@]}' SIGTERM
+trap 'echo killing ${pids[@]}; kill ${pids[@]}' SIGINT
+
+# Color escape codes
+RESTORE='\033[0m'
+RED='\033[00;31m'
+GREEN='\033[00;32m'
+YELLOW='\033[00;33m'
+
+
+msg() {
+    case "$1" in
+        error)  echo -ne "$RED"                 >&2
+                echo "$0 ${@:2}"     >&2
+                ;;
+        warn)   echo -ne "$YELLOW"              >&2
+                echo "$0 ${@:2}"     >&2
+                ;;
+        *)      echo -ne "$GREEN"
+                echo "$0 ${@}"
+    esac
+
+    # restore normal colors
+    echo -ne "$restore"
+    echo -ne "$restore"    >&2
+}
+
+usage() {
+    exec 5>&1
+    exec 1>&2
+    echo "Usage: $0 [options] DESCFILE"
+    echo ""
+    echo "DESCFILE describes the testbed in key=value format."
+    echo "Options:"
+    echo "-i IP, --ip IP"
+    echo "                      Node IP address"
+    echo "-h HOSTNAME, --hostname HOSTNAME"
+    echo "                      Node hostname"
+    echo "-c CONTROLLER_IP, --controller_ip CONTROLLER_IP"
+    echo "                      Controller IP address"
+    echo "-n CONTROLLER_HOSTNAME, --controller_hostname CONTROLLER_HOSTNAME"
+    echo "                      Controller hostname"
+    echo "-k SSH_KEY, --key SSH_KEY"
+    echo "                      Name of SSH key to use"
+    echo ""
+    echo "Example:"
+    echo "$0 openstack.desc"
+    echo "   This command will read testbed description from openstack.desc and configure the nodes accordingly."
+    echo ""
+    echo "$0 -i 10.0.0.5 -h compute1.ec2.internal -c 10.0.0.1 -n controller.ec2.internal"
+    echo "   This command will connect to 10.0.0.5 and configure it as a compute node with controller 10.0.0.1"
+    echo ""
+    echo "Notes:"
+    echo "This tool will use the following values from DESCFILE:"
+    echo " ssh_key, controller.elastic_ip, controller_private_ip, compute*_private_ip"
+    echo ""
+    exec 1>&5
+}
+
+ARGS=$(getopt -o "hi:h:c:n:k:" -l "help,ip:,hostname:,controller_ip:,controller_hostname:,key:" -n "$0" -- "$@")
+
+if [ $? != 0 ] ; then
+    msg error "error parsing command-line options"
+    exit 1
+fi
+
+eval set -- "$ARGS"
+
+while true; do
+    case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            shift;;
+        -i|--ip)
+            node_ip=$2
+            shift 2;;
+        -h|--hostname)
+            node_hostname=$2
+            shift 2;;
+        -c|--controller_ip)
+            controller_ip=$2
+            shift 2;;
+        -n|--controller_hostname)
+            controller_hostname=$2
+            shift 2;;
+        -k|--key)
+            ssh_key=$2
+            shift 2;;
+        -v|--verbose)
+            options_verbose=1
+            shift;;
+        --)
+            shift
+            break;;
+        *)
+            msg error "invalid command-line option: $1"
+            break;;
+    esac
+done
+
+parsedesc() {
+    ips=()
+    while IFS="=" read key value; do
+        case $key in
+            ssh_key)
+                ssh_key=$value;;
+            *elastic_ip)
+                elastic_ip=$value;;
+            controller.private_ip)
+                controller_hostname=$testbed-${key%%.*}.ec2.internal
+                controller_ip=$value
+                ;;
+            compute*.private_ip)
+                hosts+=($testbed-${key%%.*}.ec2.internal)
+                ips+=($value);;
+        esac
+    done < $1
+}
+
+configure_controller() {
+    scp $ssh_opts "${files[@]}" $ssh_dst: &>/dev/null
+    ssh $ssh_opts $ssh_dst "sudo bash masquerade" &>/dev/null
+    ssh $ssh_opts $ssh_dst "sudo bash puppet-openstack-configure -h $controller_hostname $controller_hostname $controller_ip"
+    scp $ssh_opts $ssh_dst:$controller_hostname.log .
+}
+
+configure_node() {
+    scp -v $ssh_opts "${files[@]}" $ssh_dst: &>/dev/null
+    ssh $ssh_opts $ssh_dst "sudo ip ro d default; sudo ip ro a default via $controller_ip" &>/dev/null
+    ssh $ssh_opts $ssh_dst "sudo bash puppet-openstack-configure -h $node_hostname $controller_hostname $controller_ip"
+    scp $ssh_opts $ssh_dst:$node_hostname.log .
+}
+
+testbed_file=$1
+testbed=${testbed_file%.*}
+testbed=${testbed##*/}
+
+user=ubuntu
+files=(puppet-openstack-configure site.pp node-setup masquerade)
+ssh_opts="-qo UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+declare -a pids
+
+# we can configure a testbed description file or a specific node
+if [[ -n $testbed ]]; then
+    if [[ -n $node_ip ]]; then
+        msg error "Script can configure a testbed (from a description file) or a node, but not both"
+        msg error "type $0 -h for usage"
+        exit 1
+    fi
+    declare -a hosts
+    parsedesc $testbed_file
+
+    basedir=$(dirname $testbed_file)
+    if [ -f $basedir/$ssh_key.pem ]; then
+        ssh_key_file=$dir/$ssh_key.pem
+    elif [ -f $testbed/$ssh_key.pem ] ; then
+        ssh_key_file=$testbed/$ssh_key.pem 
+    elif [ -f keys/$ssh_key.pem ]; then
+        ssh_key_file=keys/$ssh_key.pem
+    else
+        msg error "Could not find SSH key: $ssh_key"
+        exit 1
+    fi
+
+
+    msg "Using Elastic IP: $elastic_ip"
+    msg "Configuring controller: $controller_hostname ($controller_ip)"
+
+    ssh_opts+=" -i $ssh_key_file"
+    files+=($ssh_key_file)
+    ssh_dst="$user@$elastic_ip"
+
+    # Configure controller by connecting via ssh and running
+    # puppet-openstack-configure
+    { configure_controller && msg "Successfully configured controller" || msg error "Error configuring controller"; } &
+    pids+=($!)
+
+    # wait until Puppet server is configured to start setting up compute nodes
+    while sleep 1; do
+        ssh $ssh_opts $ssh_dst sudo service puppetmaster status &>/dev/null && break
+    done
+
+    # Configure compute nodes by recursively calling this script from the
+    # controller passing --node, the controller host/ip and the node's internal
+    # ip
+    i=0
+    for node_hostname in ${hosts[@]}; do
+        node_ip=${ips[$i]}
+        msg "Configuring node: $node_hostname ($node_ip)"
+        ssh $ssh_opts $ssh_dst "sudo bash node-setup --ip $node_ip --hostname $node_hostname --controller_ip $controller_ip --controller_hostname $controller_hostname --key $ssh_key" &
+        pids+=($!)
+        i+=1
+    done
+
+elif [[ -n $node_ip && -n $node_hostname && -n $controller_ip && -n $controller_hostname && -n $ssh_key.pem ]]; then
+    ssh_opts+=" -i $ssh_key.pem"
+    ssh_dst="$user@$node_ip"
+    { if configure_node; then
+        msg "Successfully configured $node_hostname"
+    else
+        msg error "Error configuring $node_hostname";
+    fi
+    scp $ssh_opts $ssh_dst:$node_hostname.log .
+    } &
+    pids+=($!)
+else
+    usage
+    exit 1
+fi
+
+
+# otherwise wait for them to configure nodes
+wait
+
