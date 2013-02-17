@@ -34,19 +34,19 @@ class bcolors:
         self.ENDC = ''
 
 def error(msg):
-    print bcolors.RED + msg + bcolors.ENDC
+    print bcolors.RED + sys.argv[0] + ": " + msg + bcolors.ENDC
 
 def warn(msg):
-    print bcolors.YELLOW + msg + bcolors.ENDC
+    print bcolors.YELLOW + sys.argv[0] + ": " + msg + bcolors.ENDC
 
 def info(msg):
-    print bcolors.GREEN + msg + bcolors.ENDC
+    print bcolors.GREEN + sys.argv[0] + ": " + msg + bcolors.ENDC
 
 def msg(msg):
     print msg
 
 def vpc_info(vpc):
-    return "vpc id: {}\nregion: {}\n".format(vpc.id, vpc.region.name)
+    return "vpc.id={}\nregion={}\n".format(vpc.id, vpc.region.name)
     return out
 
 def awserror(reason, exit=10):
@@ -155,11 +155,11 @@ def main():
     desc_file = options.testbed_name + ".desc"
     answer = "yes"
 
-    out = "name: {}\n".format(options.testbed_name)   +\
-          "subnet: {}\n".format(options.subnet)       +\
-          "ssh_key: {}\n".format(options.ssh_key)     +\
-          "flavor: {}\n".format(options.flavor)       +\
-          "instances: {}\n".format(options.instances)
+    out = "name={}\n".format(options.testbed_name)   +\
+          "subnet={}\n".format(options.subnet)       +\
+          "ssh_key={}\n".format(options.ssh_key)     +\
+          "flavor={}\n".format(options.flavor)       +\
+          "instances={}\n".format(options.instances)
 
     info("{}: writing description to {}\n\n".format(sys.argv[0][2:], desc_file) + out)
 
@@ -180,7 +180,7 @@ def main():
     except:
         error("Could not find AWS credentials. Please set environment variables AWS_ACCESS_KEY and AWS_SECRET_KEY.")
         sys.exit(1)
-        
+
     # Check if key exists
     if check_key_pair(c, options.ssh_key):
         info("SSH key found in AWS: '{}'.".format(options.ssh_key))
@@ -192,15 +192,16 @@ def main():
             error("Could not generate SSH keypair in AWS.")
             print traceback.format_exc().split('\n')[-2]
             sys.exit(1)
-        filename = options.ssh_key + ".pub"
+        filename = options.ssh_key + ".pem"
         try:
-            f = open(filename, 'w')
-            f.write(kp.material)
-            f.close()
+            kf = open(filename, 'w')
+            kf.write(kp.material)
+            kf.close()
+            os.chmod(filename, 0600)
         except:
-            error("Could not write SSH key to {}/{}".format(os.getcwd(), options.ssh_key))
+            error("Could not write or change permissions of key {}/{}.pem".format(os.getcwd(), options.ssh_key))
             sys.exit(1)
-        warn("SSH key saved in current directory: {}/{}.pub".format(options.ssh_key))
+        warn("SSH key saved in current directory: {}.pem".format(options.ssh_key))
 
     # Check if there's already a VPC using the specified subnet
     vpc = check_vpc(c, vpc_ip)
@@ -232,7 +233,7 @@ def main():
             # Subnet doesn't exist, create one
             subnet = c.create_subnet(vpc.id, subnet_ip)
             info("Created subnet: " + subnet.cidr_block)
-            f.write("subnet: {}\n".format(subnet.cidr_block))
+            f.write("subnet={}\n".format(subnet.cidr_block))
         except Exception, e:
             error( "".join(e[2]))
             awserror("create subnet")
@@ -262,12 +263,12 @@ def main():
                 # Couldn't find unused igw nor create a new one, exit
                 error( "".join(e[2]))
                 awserror("create or attach internet gateway")
-        f.write("internet_gateway: {}\n".format(igw.id))
+        f.write("internet_gateway={}\n".format(igw.id))
 
     # No error checking, assume it exists since it is created with each VPC
     routing_table = find_routing_table(c, vpc)
     info("Using routing table: " + routing_table.id)
-    f.write("routing_table: {}\n".format(routing_table.id))
+    f.write("routing_table={}\n".format(routing_table.id))
 
     # Create default route (via the internet gateway) if it doesn't exist already
     if check_default_route(c, vpc, routing_table):
@@ -275,12 +276,12 @@ def main():
     else:
         route = c.create_route(routing_table.id, "0.0.0.0/0", igw.id)
         info("Added default route")
-        
+
     # Allow all incoming tcp connections
     # FIXME: only allow known ports (ssh, apache/horizon, etc)
     sg = find_security_group(c, vpc)
     info("Using security group: " + sg.id)
-    f.write("security_group: {}\n".format(sg.id))
+    f.write("security_group={}\n".format(sg.id))
     if sg:
         try:
             info("Allowing incoming TCP connections")
@@ -294,18 +295,28 @@ def main():
 
     # Run instances in VPC
     ec2 = {} # dictionary of instances
-    if options.instances >= 2:
+    if options.instances >= 2: # TODO: single-node setup
         try:
             ec2[0] = c.run_instances('ami-3d4ff254', subnet_id=subnet.id, key_name=options.ssh_key, instance_type=options.flavor)
         except:
             error("Could not create controller instance.")
             print traceback.format_exc().split('\n')[-2]
             sys.exit(1)
+
+        # run_instances returns a boto.ec2.instance.Reservation class, let's
+        # take the first instance object
         controller = ec2[0].instances[0]
+
         info("Created controller instance: {}".format(controller.id))
-        f.write("controller.id: {}\n".format(controller.id))
-        f.write("controller.private_ip: {}\n" + controller.private_ip_address)
-        
+        f.write("controller.id={}\n".format(controller.id))
+        f.write("controller.private_ip={}\n".format(controller.private_ip_address))
+
+        # Disable source/destination checking so that controller can be
+        # used as NAT router (due to scarcity of Elastic IPs)
+        controller.modify_attribute("sourceDestCheck", "false")
+        info("Disabled source/destination check for controller instance")
+
+
         for node in xrange(1, int(options.instances)):
             try:
                 ec2[node] = c.run_instances('ami-3d4ff254', subnet_id=subnet.id, key_name=options.ssh_key, instance_type=options.flavor)
@@ -315,8 +326,8 @@ def main():
                 sys.exit(1)
             compute = ec2[node].instances[0]
             info("Created compute{} instance: {}".format(node, compute.id))
-            f.write("compute{}.id: {}\n".format(node, compute.id))
-            f.write("compute{}.private_ip: {} \n".format(node, compute.private_ip_address))
+            f.write("compute{}.id={}\n".format(node, compute.id))
+            f.write("compute{}.private_ip={} \n".format(node, compute.private_ip_address))
 
         ip = find_elastic_ip(c)
         if ip:
@@ -337,10 +348,10 @@ def main():
         if not attach_ip(c, ec2[0].instances[0].id, ip, 120):
             error("Timeout reached while trying to attach Elastic IP. Aborting.")
         info("Attached Elastic IP")
-        f.write("controller.elastic_ip: {}\n".format(ip.public_ip))
+        f.write("controller.elastic_ip={}\n".format(ip.public_ip))
 
     f.close()
-                    
+
 if __name__ == "__main__":
     main()
 
