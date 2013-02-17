@@ -5,56 +5,117 @@
 #
 # Supported distributions: Ubuntu 12.04/12.10
 
-installpkg() {
-    if ! dpkg -s $1 &>/dev/null; then
-        aptitude -y install $1
-    fi
-}
-
 # Color escape codes
 RESTORE='\033[0m'
 RED='\033[00;31m'
 GREEN='\033[00;32m'
 YELLOW='\033[00;33m'
 
-# only output colors if stdout/stderr is a tty
-test -t 1 && COLORS_STDOUT=1
-test -t 2 && COLORS_STDERR=1
 
 msg() {
-# prints info/warn/error messages in colors if output is to a tty
-
     case "$1" in
-        error)  ((COLORS_STDERR)) && echo -ne "$RED"    >&2
-                echo "$0 error: ${@:2}"                 >&2
+        error)  echo -ne "$RED"                 >&2
+                echo "$0@$hostname: ${@:2}"     >&2
                 ;;
-        warn)   ((COLORS_STDERR)) && echo -ne "$YELLOW" >&2
-                echo "$0 warn: ${@:2}"                  >&2
+        warn)   echo -ne "$YELLOW"              >&2
+                echo "$0@$hostname: ${@:2}"     >&2
                 ;;
-        *)      ((COLORS_STDOUT)) && echo -ne "$GREEN"
-                echo "$0 info: ${@}"
+        *)      echo -ne "$GREEN"
+                echo "$0@$hostname: ${@}"
     esac
+
     # restore normal colors
-    ((COLORS_STDOUT)) && echo -ne "$RESTORE"
-    ((COLORS_STDERR)) && echo -ne "$RESTORE" >&2
+    echo -ne "$restore"
+    echo -ne "$restore"    >&2
 }
 
-hostname=$1
-controller_host=$2
-controller_ip=$3
+usage() {
+    exec 5>&1
+    exec 1>&2
+    echo "Usage: $0 [options] CONTROLLER_HOSTNAME CONTROLLER_IP"
+    echo ""
+    echo "Options:"
+    echo "-h HOSTNAME, --hostname HOSTNAME"
+    echo "                      Node hostname"
+    echo "                      default: CONTROLLER_HOSTNAME (assume this is the controller)"
+    echo "-l LOGFILE, --logfile LOGFILE"
+    echo "                      Write progress to LOGFILE"
+    echo "                      default: HOSTNAME.log"
+    echo ""
+    echo "Example:"
+    echo "$0 -h vpc-compute2.ec2.local --logfile /tmp/compute2.log vpc-controller.ec2.local 10.0.0.64"
+    echo ""
+    exec 1>&5
+}
 
-if ((UID!=0)); then
-    msg error "This script needs to be run as root"
+installpkg() {
+    if ! dpkg -s $1 &>/dev/null; then
+        aptitude -y install $@
+    fi
+}
+
+runcmd() {
+    if [[ -n $options_verbose ]]; then
+        "$@" | tee -a $options_logfile
+    else
+        "$@" &>> $options_logfile
+    fi
+}
+
+ARGS=$(getopt -o "l:h:v" -l "logfile:hostname:verbose" -n "$0" -- "$@")
+
+if [ $? != 0 ] ; then
+    msg error "error parsing command-line options"
     exit 1
 fi
 
-if (($#<3)); then
-    msg error "Invalid command-line arguments"
-    msg warn ""
-    msg warn "usage: $0 hostname controller_host controller_ip"
-    msg warn ""
-    msg warn "     example $0 vpc-compute2.ec2.local vpc-controller.ec2.local 10.0.0.64"
-    msg warn ""
+eval set -- "$ARGS"
+
+while true; do
+    case "$1" in
+        -l|--logfile)
+            options_logfile="$2"
+            shift 2;;
+        -h|--hostname)
+            options_hostname="$2"
+            shift 2;;
+        -v|--verbose)
+            options_verbose=1
+            shift;;
+        --)
+            shift
+            break;;
+        *)
+            msg error "invalid command-line option: $1"
+            break;;
+    esac
+done
+
+if (($#!=2)); then
+    usage
+    exit 1
+fi
+controller_hostname=$1
+controller_ip=$2
+
+if [[ -z $options_hostname ]]; then
+    options_hostname=$controller_hostname
+    hostname=$options_hostname
+    msg "Node hostname not specified (--hostname). Assuming this is the controller."
+fi
+
+hostname=$options_hostname
+
+if [[ -z $options_logfile ]]; then
+    options_logfile=${options_hostname}.log
+fi
+
+msg "Logging to $options_logfile"
+rm -f "$options_logfile"
+touch "$options_logfile"
+
+if ((UID!=0)); then
+    msg error "This script needs to be run as root"
     exit 1
 fi
 
@@ -62,16 +123,16 @@ msg "Setting hostname: $hostname"
 hostname $hostname
 echo $(hostname) > /etc/hostname
 grep -q $hostname /etc/hosts || echo "127.0.0.1 $(hostname)" >> /etc/hosts
-grep -q $controller_host /etc/hosts || echo "$controller_ip $controller_host" >> /etc/hosts
+grep -q $controller_hostname /etc/hosts || echo "$controller_ip $controller_hostname" >> /etc/hosts
 
 msg "Adding repository: PuppetLabs"
 if ! dpkg -s puppetlabs-release &>/dev/null; then
-    wget -nc -P /tmp http://apt.puppetlabs.com/puppetlabs-release-precise.deb
-    dpkg -i /tmp/puppetlabs-release-precise.deb
+    runcmd wget -nc -P /tmp http://apt.puppetlabs.com/puppetlabs-release-precise.deb
+    runcmd dpkg -i /tmp/puppetlabs-release-precise.deb
 fi
 
 msg "Adding repository: Ubuntu Cloud"
-installpkg ubuntu-cloud-keyring
+runcmd installpkg ubuntu-cloud-keyring
 
 if [ ! -f /etc/apt/sources.list.d/ubuntu-cloud.list ]; then
     cat > /etc/apt/sources.list.d/ubuntu-cloud.list << EOF
@@ -84,62 +145,73 @@ deb http://ubuntu-cloud.archive.canonical.com/ubuntu precise-updates/folsom main
 #
 #deb  http://ubuntu-cloud.archive.canonical.com/ubuntu precise-proposed/folsom main
 EOF
-    aptitude update
+    runcmd aptitude update
 fi
 
 msg "Installing: git"
-installpkg git
+runcmd installpkg git
 
 msg "Installing: puppet"
-installpkg puppet
+runcmd installpkg puppet
 
-if [[ $hostname == $controller_host ]]; then
+if [[ $hostname == $controller_hostname ]]; then
     msg "Installing: puppetmaster"
-    installpkg puppetmaster
+    runcmd installpkg puppetmaster
 fi
 
 msg "Installing Puppet modules: openstack"
 if  [ ! -d /etc/puppet/modules/openstack ]; then
-    puppet module install puppetlabs-openstack
-    mkdir -p /root/{src,backup}; cd /root/src
+    runcmd puppet module install puppetlabs-openstack
+    runcmd mkdir -p /root/{src,backup}; cd /root/src
     for service in mysql openstack keystone nova glance cinder horizon; do
-      git clone git://github.com/puppetlabs/puppetlabs-$service.git
-      mv -f /etc/puppet/modules/$service /root/backup
-      ln -svf $PWD/puppetlabs-$service /etc/puppet/modules/$service
+      runcmd git clone git://github.com/puppetlabs/puppetlabs-$service.git
+      runcmd mv -f /etc/puppet/modules/$service /root/backup
+      runcmd ln -svf $PWD/puppetlabs-$service /etc/puppet/modules/$service
     done
-    chmod -R a+rX /root/src
-    chmod a+x /root
-    cd -
+    runcmd chmod -R a+rX /root/src
+    runcmd chmod a+x /root
+    cd - &>/dev/null
 fi
 
 msg "Configuring: Puppet agent"
-if ! grep -q $controller_host /etc/puppet/puppet.conf; then
+if ! grep -q $controller_hostname /etc/puppet/puppet.conf; then
     cat >> /etc/puppet/puppet.conf << EOF
 [agent]
-server      = $controller_host
+server      = $controller_hostname
 EOF
 fi
 
-
-if [[ $controller_host == $hostname ]]; then
+if [[ $controller_hostname == $hostname ]]; then
     msg "Configuring: Puppet server"
-    curl https://raw.github.com/redondos/puppet-openstack-configure/master/site.pp > ~/site.pp
-    sed 's/^$controller_node_address.*/$controller_node_address = '"'$controller_host'/" site.pp > /etc/puppet/manifests/site.pp
+    if [ -f site.pp ]; then
+        cp site.pp /etc/puppet/manifests
+        chown puppet:puppet /etc/puppet/manifests/site.pp
+    else
+        exit 1
+        curl https://raw.github.com/redondos/puppet-openstack-configure/master/site.pp > /etc/puppet/manifests/site.pp
+    fi
+
+    sed -ie 's/^$controller_node_address.*/$controller_node_address = '"'$controller_hostname'/" /etc/puppet/manifests/site.pp
     sed -ie "s/^\$private_interface.*/\$private_interface = 'eth0'/" /etc/puppet/manifests/site.pp
     # sed -ie 's/multi_host.*/multi_host => false,/' /etc/puppet/manifests/site.pp
     
     echo -e '*.local\n*.internal' > /etc/puppet/autosign.conf
+    touch /tmp/puppetmaster_configured
 fi
 
-msg "Running puppet agent. This may take a while"
-time puppet agent -t
+# remove stale lock (in case Puppet was interrupted)
+ps aux | grep -q puppet.agent || sudo rm /var/lib/puppet/state/agent_catalog_run.lock
+
+msg "Running puppet agent to install and configure OpenStack. This may take a while"
+runcmd puppet agent -t
 
 if (($?!=0)); then
-    msg error "Error running Puppet agent. If it is certificate-related, run from Puppet master:"
-    msg error "   puppet cert sign $hostname"
-    msg error "Then manually trigger update: \`puppet agent -t'"
-    msg info "Certificate signatures aren't needed if the client has a fully qualified domain name"
-    msg info "e.g. openstack-compute1.ec2.internal"
+    msg error "Error running Puppet agent. Inspect the log file: $options_logfile"
+    msg warn "If the client certificate needs to be signed, run from Puppet master:"
+    msg warn "   puppet cert sign $hostname"
+    msg warn "Then manually trigger update: \`puppet agent -t'"
+    msg "Note that certificate signatures aren't needed if the client has a fully qualified domain name"
+    msg "e.g. openstack-compute1.ec2.internal"
 fi
 
 # vim: ts=4:sw=4:et
