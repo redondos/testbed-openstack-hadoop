@@ -118,11 +118,19 @@ if ((UID!=0)); then
     exit 1
 fi
 
-msg "Setting hostname: $hostname"
-hostname $hostname
-echo $(hostname) > /etc/hostname
-grep -q $hostname /etc/hosts || echo "127.0.0.1 $(hostname)" >> /etc/hosts
-grep -q $controller_hostname /etc/hosts || echo "$controller_ip $controller_hostname" >> /etc/hosts
+if [[ $(hostname) != $hostname ]]; then
+    msg "Setting hostname"
+    hostname $hostname
+    echo $(hostname) > /etc/hostname
+    if ! grep -q $hostname /etc/hosts; then
+        if grep -q 127.0.0.1 /etc/hosts; then
+            sed -ie "s/127.0.0.1.*/& $hostname/" /etc/hosts
+        else
+            echo "127.0.0.1 localhost $hostname" >> /etc/hosts
+        fi
+    fi
+    grep -q $controller_hostname /etc/hosts || echo "$controller_ip $controller_hostname" >> /etc/hosts
+fi
 
 msg "Adding repository: PuppetLabs"
 if ! dpkg -s puppetlabs-release &>/dev/null; then
