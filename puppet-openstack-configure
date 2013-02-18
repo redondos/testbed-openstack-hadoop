@@ -49,7 +49,8 @@ usage() {
 
 installpkg() {
     if ! dpkg -s $1 &>/dev/null; then
-        aptitude -y install $@
+        msg "Installing: $1"
+        runcmd aptitude -y install $@
     fi
 }
 
@@ -109,7 +110,7 @@ if [[ -z $options_logfile ]]; then
     options_logfile=${options_hostname}.log
 fi
 
-msg "Logging to $options_logfile"
+msg "Logfile: $options_logfile"
 rm -f "$options_logfile"
 touch "$options_logfile"
 
@@ -132,16 +133,16 @@ if [[ $(hostname) != $hostname ]]; then
     grep -q $controller_hostname /etc/hosts || echo "$controller_ip $controller_hostname" >> /etc/hosts
 fi
 
-msg "Adding repository: PuppetLabs"
 if ! dpkg -s puppetlabs-release &>/dev/null; then
+    msg "Adding repository: PuppetLabs"
     runcmd wget -nc -P /tmp http://apt.puppetlabs.com/puppetlabs-release-precise.deb
     runcmd dpkg -i /tmp/puppetlabs-release-precise.deb
 fi
 
-msg "Adding repository: Ubuntu Cloud"
-runcmd installpkg ubuntu-cloud-keyring
-
+# ubuntu cloud repository (updated openstack packages)
+installpkg ubuntu-cloud-keyring
 if [ ! -f /etc/apt/sources.list.d/ubuntu-cloud.list ]; then
+    msg "Adding repository: Ubuntu Cloud"
     cat > /etc/apt/sources.list.d/ubuntu-cloud.list << EOF
 # The primary updates archive that users should be using
  
@@ -155,19 +156,15 @@ EOF
     runcmd aptitude update
 fi
 
-msg "Installing: git"
-runcmd installpkg git
-
-msg "Installing: puppet"
-runcmd installpkg puppet
+installpkg git
+installpkg puppet
 
 if [[ $hostname == $controller_hostname ]]; then
-    msg "Installing: puppetmaster"
-    runcmd installpkg puppetmaster
+    installpkg puppetmaster
 fi
 
-msg "Installing Puppet modules: openstack"
 if  [ ! -d /etc/puppet/modules/openstack ]; then
+    msg "Installing: OpenStack Puppet modules"
     runcmd puppet module install puppetlabs-openstack
     runcmd mkdir -p /root/{src,backup}; cd /root/src
     for service in mysql openstack keystone nova glance cinder horizon; do
@@ -180,8 +177,8 @@ if  [ ! -d /etc/puppet/modules/openstack ]; then
     cd - &>/dev/null
 fi
 
-msg "Configuring: Puppet agent"
 if ! grep -q $controller_hostname /etc/puppet/puppet.conf; then
+    msg "Configuring: Puppet agent"
     cat >> /etc/puppet/puppet.conf << EOF
 [agent]
 server      = $controller_hostname
@@ -189,8 +186,8 @@ EOF
 fi
 
 if [[ $controller_hostname == $hostname ]]; then
-    msg "Configuring: Puppet server"
     if [ -f site.pp ]; then
+        msg "Configuring: Puppet server"
         cp site.pp /etc/puppet/manifests
         chown puppet:puppet /etc/puppet/manifests/site.pp
     else
