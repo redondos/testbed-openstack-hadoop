@@ -200,16 +200,17 @@ if [[ $controller_hostname == $hostname ]]; then
     # sed -ie 's/multi_host.*/multi_host => false,/' /etc/puppet/manifests/site.pp
     
     echo -e '*.local\n*.internal' > /etc/puppet/autosign.conf
-    touch /tmp/puppetmaster_configured
 fi
 
 # remove stale lock (in case Puppet was interrupted)
 ps aux | grep -q puppet.agent || sudo rm /var/lib/puppet/state/agent_catalog_run.lock
 
-msg "Running puppet agent to install and configure OpenStack. This may take a while"
+msg "Installing/Configuring: OpenStack"
 runcmd puppet agent -t
 
-if (($?!=0)); then
+# puppet agent will return 2 while parsing /etc/nova/nova.conf
+# known bug in openstack modules (https://github.com/puppetlabs/puppetlabs-nova/issues/161)
+if (($?!=0 && $?!=2)); then
     msg error "Error running Puppet agent. Inspect the log file: $options_logfile"
     msg warn "If the client certificate needs to be signed, run from Puppet master:"
     msg warn "   puppet cert sign $hostname"
