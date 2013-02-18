@@ -1,5 +1,5 @@
 #!/bin/bash
-# 2013 Angelo Olivera
+# 2013 Angelo Olivera <aolivera@gmail.com>
 #
 # Automatic deployment of OpenStack nodes using Puppet
 #
@@ -10,7 +10,6 @@ RESTORE='\033[0m'
 RED='\033[00;31m'
 GREEN='\033[00;32m'
 YELLOW='\033[00;33m'
-
 
 msg() {
     case "$1" in

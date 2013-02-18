@@ -1,5 +1,5 @@
 #!/bin/bash
-# 2013 Angelo Olivera
+# 2013 Angelo Olivera <aolivera@gmail.com>
 #
 # Set up remote nodes using puppet-openstack-configure
 #
