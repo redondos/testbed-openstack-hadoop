@@ -2,8 +2,10 @@
 # 2013 Angelo Olivera <aolivera@gmail.com>
 # Helper script to set up controller nodes as NAT routers
 
-echo 1 > /proc/sys/net/ipv4/ip_forward
-/sbin/iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
-/sbin/iptables -A FORWARD -i eth0 -o etho -m state --state RELATED,ESTABLISHED -j ACCEPT
-/sbin/iptables -A FORWARD -i eth0 -o eth0 -j ACCEPT
+if ! /sbin/iptables -t nat -C POSTROUTING -o eth0 -j MASQUERADE 2>/dev/null; then
+    echo 1 > /proc/sys/net/ipv4/ip_forward
+    /sbin/iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+    /sbin/iptables -A FORWARD -i eth0 -o etho -m state --state RELATED,ESTABLISHED -j ACCEPT
+    /sbin/iptables -A FORWARD -i eth0 -o eth0 -j ACCEPT
+fi
 
