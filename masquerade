@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2013 Angelo Olivera <aolivera@gmail.com>
 # Helper script to set up controller nodes as NAT routers
 
 echo 1 > /proc/sys/net/ipv4/ip_forward
