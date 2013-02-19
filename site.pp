@@ -1,3 +1,5 @@
+# Configure single node and multi-node openstack instances
+
 # deploy a script that can be used to test nova
 class { 'openstack::test_file': }
 
@@ -23,7 +25,7 @@ $glance_db_password      = 'glance_pass'
 $glance_user_password    = 'glance_pass'
 $rabbit_password         = 'openstack_rabbit_password'
 $rabbit_user             = 'openstack_rabbit_user'
-$fixed_network_range     = '10.0.0.0/24'
+$fixed_network_range     = '172.16.0.0/24'
 $floating_network_range  = '192.168.101.64/28'
 $mysql_root_password     = 'root'
 $cinder_root_password    = 'cinder_pass'
@@ -33,8 +35,13 @@ $verbose                 = false
 # by default it does not enable atomatically adding floating IPs
 $auto_assign_floating_ip = false
 
-
 #### end shared variables #################
+
+# multi-node specific parameters
+$controller_node_address  = 'openstack-puppet-controller.ec2.internal'
+$controller_node_public   = $controller_node_address
+$controller_node_internal = $controller_node_address
+$sql_connection         = "mysql://nova:${nova_db_password}@${controller_node_internal}/nova"
 
 # all nodes whose certname matches openstack_all should be
 # deployed as all-in-one openstack installations.
@@ -68,29 +75,9 @@ node /openstack_all/ {
     keystone_admin_token => $keystone_admin_token,
     controller_node      => '127.0.0.1',
   }
-
 }
 
-# multi-node specific parameters
-
-#$controller_node_address  = '10.85.33.85'
-$controller_node_address  = 'openstack-puppet-controller.ec2.internal'
-
-$controller_node_public   = $controller_node_address
-$controller_node_internal = $controller_node_address
-$sql_connection         = "mysql://nova:${nova_db_password}@${controller_node_internal}/nova"
-
 node /controller/ {
-
-# include mysql
-# class { 'mysql::server': 
-#   config_hash => { 'root_password' => 'root' }
-# }
-
-#  class { 'nova::volume': enabled => true }
-
-#  class { 'nova::volume::iscsi': }
-
   class { 'openstack::controller':
     public_address          => $controller_node_public,
     public_interface        => $public_interface,
@@ -124,12 +111,9 @@ node /controller/ {
     keystone_admin_token => $keystone_admin_token,
     controller_node      => $controller_node_internal,
   }
-
-
 }
 
 node /compute/ {
-
   class { 'openstack::compute':
     public_interface   => $public_interface,
     private_interface  => $private_interface,
