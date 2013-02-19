@@ -156,6 +156,14 @@ parsedesc() {
 }
 
 configure_controller() {
+    # wait until controller is online
+    for i in {1..20}; do
+        if ssh $ssh_opts $ssh_dst true; then
+            break
+        fi
+        sleep 1
+    done
+
     scp $ssh_opts "${files[@]}" $ssh_dst: &>/dev/null
     ssh $ssh_opts $ssh_dst "sudo bash network-setup server $controller_hostname 2>/dev/null"
     ssh $ssh_opts $ssh_dst "sudo bash puppet-openstack-configure $verbose -h $controller_hostname -e $elastic_ip $controller_hostname $controller_ip"
