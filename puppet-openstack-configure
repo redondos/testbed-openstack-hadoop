@@ -37,6 +37,9 @@ usage() {
     echo "-h HOSTNAME, --hostname HOSTNAME"
     echo "                      Node hostname"
     echo "                      default: CONTROLLER_HOSTNAME (assume this is the controller)"
+    echo "-e IP, --elastic IP"
+    echo "                      Public IP address for node"
+    echo "                      default: address from eth0"
     echo "-l LOGFILE, --logfile LOGFILE"
     echo "                      Write progress to LOGFILE"
     echo "                      default: HOSTNAME.log"
@@ -62,7 +65,106 @@ runcmd() {
     fi
 }
 
-ARGS=$(getopt -o "l:h:v" -l "logfile:hostname:verbose" -n "$0" -- "$@")
+sethostname() {
+    hostname="$1"
+    [[ $(hostname) == $hostname ]] && return 0
+    msg "Setting hostname"
+    hostname $hostname
+    echo $(hostname) > /etc/hostname
+    grep -q $hostname /etc/hosts && return 0
+    if grep -q 127.0.0.1 /etc/hosts; then
+        sed -ie "s/127.0.0.1.*/& $hostname/" /etc/hosts
+    else
+        echo "127.0.0.1 localhost $hostname" >> /etc/hosts
+    fi
+}
+
+install_puppet_modules() {
+    # openstack modules from puppet forge
+    modules=/etc/puppet/modules
+    if [ ! -e $modules/openstack ]; then
+        msg "Installing: OpenStack Puppet modules"
+        runcmd puppet module install puppetlabs-openstack
+    fi
+
+    # install/upgrade modules from git repositories
+    if [ ! -L $modules/openstack ]; then
+        runcmd mkdir -p /root/{src,backup}; cd /root/src
+        for service in mysql openstack keystone nova glance cinder horizon; do
+            runcmd git clone git://github.com/puppetlabs/puppetlabs-$service.git
+            runcmd rm -rf /root/backup/$service
+            runcmd mv -f /etc/puppet/modules/$service /root/backup
+            runcmd ln -svf $PWD/puppetlabs-$service /etc/puppet/modules/$service
+        done
+        runcmd chmod -R a+rX /root/src
+        runcmd chmod a+x /root
+        cd - >/dev/null
+    else
+        cd /root/src
+        for service in mysql openstack keystone nova glance cinder horizon; do
+            cd puppetlabs-$service
+            runcmd git pull
+            cd - >/dev/null
+        done
+    fi
+}
+
+configure_puppet() {
+    master=$1
+    conf=/etc/puppet/puppet.conf
+    if ! grep -q $master $conf; then
+        msg "Configuring: Puppet agent"
+        echo -e "\n[agent]\nserver = $master\n" >> $conf
+    fi
+}
+
+add_puppet_repo() {
+    if ! dpkg -s puppetlabs-release &>/dev/null; then
+        msg "Adding repository: PuppetLabs"
+        runcmd wget -nc -P /tmp http://apt.puppetlabs.com/puppetlabs-release-precise.deb
+        runcmd dpkg -i /tmp/puppetlabs-release-precise.deb
+    fi
+}
+
+add_cloud_repo() {
+    installpkg ubuntu-cloud-keyring
+    conf=/etc/apt/sources.list.d/ubuntu-cloud.list
+    if [ ! -f $conf ]; then
+        msg "Adding repository: Ubuntu Cloud"
+        echo "deb http://ubuntu-cloud.archive.canonical.com/ubuntu precise-updates/folsom main" > $conf
+    fi
+}
+
+configure_puppetmaster() {
+    controller_hostname="$1"
+    elastic_ip="$2"
+
+    if [ -f site.pp ]; then
+        msg "Configuring: Puppet server"
+        cp site.pp /etc/puppet/manifests
+        chown puppet:puppet /etc/puppet/manifests/site.pp
+    else
+        curl https://raw.github.com/redondos/puppet-openstack-configure/master/site.pp > /etc/puppet/manifests/site.pp
+    fi
+
+    # configure puppet-openstack
+    sed -ie 's/^$controller_node_address.*/$controller_node_address = '"'$controller_hostname'/" /etc/puppet/manifests/site.pp
+    sed -ie "s/^\$private_interface.*/\$private_interface = 'eth0'/" /etc/puppet/manifests/site.pp
+    if [[ -n $controller_public_ip ]]; then
+        sed -ie "s/^\(\$controller_node_public.*\)\$controller_node_address/\1'${controller_public_ip}'/" /etc/puppet/manifests/site.pp
+    fi
+
+    # enable autosigning (only works for FQDNs)
+    echo -e '*.local\n*.internal' > /etc/puppet/autosign.conf
+}
+
+if ((UID!=0)); then
+    msg error "This script needs to be run as root"
+    exit 1
+fi
+
+# parse command-line options
+ARGS=$(getopt -o "l:h:e:v" -l "logfile:,hostname:,elastic:,verbose" -n "$0" -- "$@")
 
 if [ $? != 0 ] ; then
     msg error "error parsing command-line options"
@@ -79,8 +181,12 @@ while true; do
         -h|--hostname)
             options_hostname="$2"
             shift 2;;
+        -e|--elastic)
+            options_elastic_ip="$2"
+            shift 2;;
         -v|--verbose)
             options_verbose=1
+            set -x
             shift;;
         --)
             shift
@@ -91,6 +197,7 @@ while true; do
     esac
 done
 
+# check for controller host/ip command-line arguments
 if (($#!=2)); then
     usage
     exit 1
@@ -98,114 +205,43 @@ fi
 controller_hostname=$1
 controller_ip=$2
 
+# by default log to HOSTNAME.log
+if [[ -z $options_logfile ]]; then
+    options_logfile=${options_hostname}.log
+fi
+msg "Logfile: $options_logfile"
+rm -f "$options_logfile"
+touch "$options_logfile"
+
+# if hostname hasn't been specified, assume controller instance
 if [[ -z $options_hostname ]]; then
     options_hostname=$controller_hostname
     hostname=$options_hostname
     msg "Node hostname not specified (--hostname). Assuming this is the controller."
 fi
-
 hostname=$options_hostname
+# set hostname and make sure we have an address for the controller
+runcmd sethostname $hostname
+grep -q $controller_hostname /etc/hosts || echo "$controller_ip $controller_hostname" >> /etc/hosts
 
-if [[ -z $options_logfile ]]; then
-    options_logfile=${options_hostname}.log
-fi
+# updated puppet/openstack packages
+add_puppet_repo
+add_cloud_repo
 
-msg "Logfile: $options_logfile"
-rm -f "$options_logfile"
-touch "$options_logfile"
-
-if ((UID!=0)); then
-    msg error "This script needs to be run as root"
-    exit 1
-fi
-
-if [[ $(hostname) != $hostname ]]; then
-    msg "Setting hostname"
-    hostname $hostname
-    echo $(hostname) > /etc/hostname
-    if ! grep -q $hostname /etc/hosts; then
-        if grep -q 127.0.0.1 /etc/hosts; then
-            sed -ie "s/127.0.0.1.*/& $hostname/" /etc/hosts
-        else
-            echo "127.0.0.1 localhost $hostname" >> /etc/hosts
-        fi
-    fi
-    grep -q $controller_hostname /etc/hosts || echo "$controller_ip $controller_hostname" >> /etc/hosts
-fi
-
-if ! dpkg -s puppetlabs-release &>/dev/null; then
-    msg "Adding repository: PuppetLabs"
-    runcmd wget -nc -P /tmp http://apt.puppetlabs.com/puppetlabs-release-precise.deb
-    runcmd dpkg -i /tmp/puppetlabs-release-precise.deb
-fi
-
-# ubuntu cloud repository (updated openstack packages)
-installpkg ubuntu-cloud-keyring
-if [ ! -f /etc/apt/sources.list.d/ubuntu-cloud.list ]; then
-    msg "Adding repository: Ubuntu Cloud"
-    cat > /etc/apt/sources.list.d/ubuntu-cloud.list << EOF
-# The primary updates archive that users should be using
- 
-deb http://ubuntu-cloud.archive.canonical.com/ubuntu precise-updates/folsom main
-
-# Public -proposed archive mimicking the SRU process for extended testing.
-# Packages should bake here for at least 7 days. 
-#
-#deb  http://ubuntu-cloud.archive.canonical.com/ubuntu precise-proposed/folsom main
-EOF
-    runcmd aptitude update
-fi
-
+# install/configure packages
+runcmd aptitude update
 installpkg git
 installpkg puppet
-
+install_puppet_modules
+configure_puppet $controller_hostname
 if [[ $hostname == $controller_hostname ]]; then
     installpkg puppetmaster
+    configure_puppetmaster $controller_hostname $options_elastic_ip
 fi
 
-if  [ ! -d /etc/puppet/modules/openstack ]; then
-    msg "Installing: OpenStack Puppet modules"
-    runcmd puppet module install puppetlabs-openstack
-    runcmd mkdir -p /root/{src,backup}; cd /root/src
-    for service in mysql openstack keystone nova glance cinder horizon; do
-      runcmd git clone git://github.com/puppetlabs/puppetlabs-$service.git
-      runcmd mv -f /etc/puppet/modules/$service /root/backup
-      runcmd ln -svf $PWD/puppetlabs-$service /etc/puppet/modules/$service
-    done
-    runcmd chmod -R a+rX /root/src
-    runcmd chmod a+x /root
-    cd - &>/dev/null
-fi
-
-if ! grep -q $controller_hostname /etc/puppet/puppet.conf; then
-    msg "Configuring: Puppet agent"
-    cat >> /etc/puppet/puppet.conf << EOF
-[agent]
-server      = $controller_hostname
-EOF
-fi
-
-if [[ $controller_hostname == $hostname ]]; then
-    if [ -f site.pp ]; then
-        msg "Configuring: Puppet server"
-        cp site.pp /etc/puppet/manifests
-        chown puppet:puppet /etc/puppet/manifests/site.pp
-    else
-        exit 1
-        curl https://raw.github.com/redondos/puppet-openstack-configure/master/site.pp > /etc/puppet/manifests/site.pp
-    fi
-
-    sed -ie 's/^$controller_node_address.*/$controller_node_address = '"'$controller_hostname'/" /etc/puppet/manifests/site.pp
-    sed -ie "s/^\$private_interface.*/\$private_interface = 'eth0'/" /etc/puppet/manifests/site.pp
-    # sed -ie 's/multi_host.*/multi_host => false,/' /etc/puppet/manifests/site.pp
-    
-    echo -e '*.local\n*.internal' > /etc/puppet/autosign.conf
-fi
-
-# remove stale lock (in case Puppet was interrupted)
+# run puppet to install openstack after removing stale lock (in case Puppet was interrupted)
 ps aux | grep -q puppet.agent || sudo rm /var/lib/puppet/state/agent_catalog_run.lock
-
-msg "Installing/Configuring: OpenStack"
+msg "Installing and configuring: OpenStack"
 runcmd puppet agent -t
 
 # puppet agent will return 2 while parsing /etc/nova/nova.conf
