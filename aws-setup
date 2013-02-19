@@ -9,7 +9,7 @@
 # - create controller and compute instances
 # - create and attach elastic ip to controller
 
-import sys, os, time
+import sys, os, time, shutil
 from boto.vpc import VPCConnection
 from optparse import OptionParser
 import traceback
@@ -33,8 +33,9 @@ class bcolors:
         self.FAIL = ''
         self.ENDC = ''
 
-def error(msg):
+def error(msg, exit=1):
     print bcolors.RED + sys.argv[0] + ": " + msg + bcolors.ENDC
+    sys.exit(exit)
 
 def warn(msg):
     print bcolors.YELLOW + sys.argv[0] + ": " + msg + bcolors.ENDC
@@ -44,10 +45,6 @@ def info(msg):
 
 def msg(msg):
     print msg
-
-def vpc_info(vpc):
-    return "vpc.id={}\nregion={}\n".format(vpc.id, vpc.region.name)
-    return out
 
 def awserror(reason, exit=10):
     error("Could not " + reason + ". Check AWS Console: https://console.aws.amazon.com/vpc/")
@@ -122,10 +119,7 @@ def attach_ip(connection, instance_id, ip, wait):
 
 def main():
 
-    parser = OptionParser()
-    parser.add_option("-n", "--name", dest="testbed_name", default="testbed", metavar="TESTBED",
-                        help="testbed name"
-                        '       default: "testbed"' )
+    parser = OptionParser(usage="usage: %prog [options] testbed")
 
     parser.add_option("-s", "--subnet", dest="subnet", default="10.0.0.0/24", metavar="SUBNET", 
                         help="subnet to use for Amazon VPC, in CIDR notation  "
@@ -135,33 +129,43 @@ def main():
                         help="name of ssh key. it will be created if not nonexistent    "
                         '       default: "openstack"' )
 
-    parser.add_option("-f", "--flavor", dest="flavor", default="t1.micro", metavar="FLAVOR",
-                        help="instance type: t1.micro, m1.medium, m3.xlarge, etc. "
-                        '       default: "t1.micro"' )
+    parser.add_option("-f", "--flavor", dest="flavor", default="m1.medium", metavar="FLAVOR",
+                        help="instance type: t1.micro, m1.small, m3.xlarge, etc. "
+                        '       default: "m1.medium"' )
 
-    parser.add_option("-i", "--instances", dest="instances", default=2, metavar="INSTANCES",
+    parser.add_option("-n", "--instances", dest="instances", default=2, metavar="INSTANCES",
                         help="number of instances to spawn.                 "
                         "       if set to 1, a single node setup will be used."
-                        '       default: 2')
+                        "       default: 2")
 
     parser.add_option("-y", "--yes", action="store_true", dest="yes", default=False,
-                        help="answer yes to all questions              "
-                        "       default: unset")
+                        help="answer yes to all questions              ")
 
     (options, args) = parser.parse_args()
 
+    if len(args) != 1:
+        parser.print_usage()
+        sys.exit(1)
+
     # global variables
+    testbed_name = args[0]
     vpc_ip = options.subnet
-    desc_file = options.testbed_name + ".desc"
+    desc_file = testbed_name + "/" + testbed_name + ".desc"
     answer = "yes"
 
-    out = "name={}\n".format(options.testbed_name)   +\
-          "subnet={}\n".format(options.subnet)       +\
-          "ssh_key={}\n".format(options.ssh_key)     +\
-          "flavor={}\n".format(options.flavor)       +\
-          "instances={}\n".format(options.instances)
+    info("{}: Writing description to {}\n".format(sys.argv[0][2:], desc_file))
 
-    info("{}: writing description to {}\n\n".format(sys.argv[0][2:], desc_file) + out)
+    info("Testbed name: " + testbed_name)
+    info("Subnet: " + options.subnet)
+    info("SSH key: " + options.ssh_key)
+    info("Flavor: " + options.flavor)
+    info("Number of instances: " + str(options.instances) + "\n")
+
+    out = "name={}\nsubnet={}\nssh_key={}\nflavor={}\ninstances={}\n"\
+            .format(testbed_name, options.subnet, options.ssh_key, options.flavor, options.instances)
+
+    if not os.path.isdir(testbed_name):
+        os.mkdir(testbed_name)
 
     f = open(desc_file, 'w')
     f.write(out)
@@ -179,37 +183,42 @@ def main():
         c = VPCConnection(os.environ['AWS_ACCESS_KEY'], os.environ['AWS_SECRET_KEY'])
     except:
         error("Could not find AWS credentials. Please set environment variables AWS_ACCESS_KEY and AWS_SECRET_KEY.")
-        sys.exit(1)
 
-    # Check if key exists
+    # Check if key exists, otherwise create one
+    filename = options.ssh_key + ".pem"
+    keyfile = testbed_name + "/" + filename
     if check_key_pair(c, options.ssh_key):
         info("SSH key found in AWS: '{}'.".format(options.ssh_key))
+        for path in [".", "keys"]:
+            cur_f = path + "/" + filename
+            if os.path.exists(cur_f):
+                shutil.copyfile(cur_f, keyfile)
+                os.chmod(keyfile, 0600)
+                warn("Copied key: " + keyfile)
     else:
         warn("SSH key not found in AWS: '{}'. Creating one...".format(options.ssh_key))
         try:
             kp = c.create_key_pair(options.ssh_key)
         except:
-            error("Could not generate SSH keypair in AWS.")
             print traceback.format_exc().split('\n')[-2]
-            sys.exit(1)
-        filename = options.ssh_key + ".pem"
+            error("Could not generate SSH keypair in AWS.")
         try:
-            kf = open(filename, 'w')
+            kf = open(keyfile, 'w')
             kf.write(kp.material)
             kf.close()
-            os.chmod(filename, 0600)
+            os.chmod(keyfile, 0600)
         except:
-            error("Could not write or change permissions of key {}/{}.pem".format(os.getcwd(), options.ssh_key))
-            sys.exit(1)
-        warn("SSH key saved in current directory: {}.pem".format(options.ssh_key))
+            error("Could not write or change permissions of key: " + keyfile)
+        warn("SSH key saved: {}".format(keyfile))
 
     # Check if there's already a VPC using the specified subnet
     vpc = check_vpc(c, vpc_ip)
     if vpc:
         info("Found VPC".format(vpc_ip))
-        out = vpc_info(vpc)
-        info(out)
-        f.write(out)
+        info("ID: " + vpc.id)
+        info("Region: " + vpc.region.name)
+        f.write("vpc.id=" + vpc.id + "\n")
+        f.write("vpc.region.name=" + vpc.region.name + "\n")
         answer = "y"
         if not options.yes:
             answer = raw_input("OK to reuse it? Y/n ")
@@ -220,8 +229,8 @@ def main():
             vpc = c.create_vpc(vpc_ip)
             info("Created VPC: " + vpc.id)
         except Exception, e:
-            error( "".join(e[2]))
             awserror("create VPC")
+            error( "".join(e[2]))
 
     # Check if subnet exists
     subnet_ip=str(vpc_base) + '/' + str(int(vpc_size)+1)
@@ -235,8 +244,8 @@ def main():
             info("Created subnet: " + subnet.cidr_block)
             f.write("subnet={}\n".format(subnet.cidr_block))
         except Exception, e:
-            error( "".join(e[2]))
             awserror("create subnet")
+            error( "".join(e[2]))
 
     # Check if Internet Gateway exists for VPC
     igw = check_igw(c, vpc)
@@ -250,8 +259,8 @@ def main():
                 attachment = c.attach_internet_gateway(igw.id, vpc.id)
                 info("Found free internet gateway, attaching to vpc: " + igw.id)
             except Exception, e:
-                error( "".join(e[2]))
                 awserror("attach internet gateway")
+                error( "".join(e[2]))
         else:
             try:
                 # Try to create a new igw
@@ -261,8 +270,8 @@ def main():
                 info("Attached igw to vpc: " + str(attachment))
             except Exception, e:
                 # Couldn't find unused igw nor create a new one, exit
-                error( "".join(e[2]))
                 awserror("create or attach internet gateway")
+                error( "".join(e[2]))
         f.write("internet_gateway={}\n".format(igw.id))
 
     # No error checking, assume it exists since it is created with each VPC
@@ -299,15 +308,15 @@ def main():
         try:
             ec2[0] = c.run_instances('ami-3d4ff254', subnet_id=subnet.id, key_name=options.ssh_key, instance_type=options.flavor)
         except:
-            error("Could not create controller instance.")
             print traceback.format_exc().split('\n')[-2]
-            sys.exit(1)
+            error("Could not create controller instance.")
 
         # run_instances returns a boto.ec2.instance.Reservation class, let's
         # take the first instance object
         controller = ec2[0].instances[0]
 
         info("Created controller instance: {}".format(controller.id))
+        time.sleep(2)
         f.write("controller.id={}\n".format(controller.id))
         f.write("controller.private_ip={}\n".format(controller.private_ip_address))
 
@@ -318,23 +327,23 @@ def main():
 
         # Create a name tag for controller
         tags = {}
-        tags["Name"] = options.testbed_name + "-controller"
+        tags["Name"] = testbed_name + "-controller"
         c.create_tags([controller.id], tags)
 
         for node in xrange(1, int(options.instances)):
             try:
                 ec2[node] = c.run_instances('ami-3d4ff254', subnet_id=subnet.id, key_name=options.ssh_key, instance_type=options.flavor)
             except:
-                error("Could not create compute{} instance".format(node))
                 print traceback.format_exc().split('\n')[-2]
-                sys.exit(1)
+                error("Could not create compute{} instance".format(node))
             compute = ec2[node].instances[0]
             info("Created compute{} instance: {}".format(node, compute.id))
+            time.sleep(2)
             f.write("compute{}.id={}\n".format(node, compute.id))
             f.write("compute{}.private_ip={} \n".format(node, compute.private_ip_address))
 
             # Create name tags for nodes
-            tags["Name"] = options.testbed_name + "-compute" + str(node)
+            tags["Name"] = testbed_name + "-compute" + str(node)
             c.create_tags([compute.id], tags)
 
         ip = find_elastic_ip(c)
@@ -347,9 +356,8 @@ def main():
             try:
                 ip = c.allocate_address("vpc")
             except:
-                error("Could not allocate Elastic IP")
                 print traceback.format_exc().split('\n')[-2] 
-                sys.exit(1)
+                error("Could not allocate Elastic IP")
             warn("Allocated Elastic IP: {}".format(ip.public_ip))
 
         warn("Waiting for controller to spawn to attach IP")
