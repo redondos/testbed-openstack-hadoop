@@ -157,21 +157,21 @@ parsedesc() {
 
 configure_controller() {
     scp $ssh_opts "${files[@]}" $ssh_dst: &>/dev/null
-    ssh $ssh_opts $ssh_dst "sudo bash masquerade 2>/dev/null"
-    ssh $ssh_opts $ssh_dst "sudo bash puppet-openstack-configure -h $controller_hostname $controller_hostname $controller_ip"
+    ssh $ssh_opts $ssh_dst "sudo bash network-setup server $controller_hostname 2>/dev/null"
+    ssh $ssh_opts $ssh_dst "sudo bash puppet-openstack-configure $verbose -h $controller_hostname -e $elastic_ip $controller_hostname $controller_ip"
     scp $ssh_opts $ssh_dst:$controller_hostname.log $testbed
 }
 
 configure_node() {
     scp $ssh_opts "${files[@]}" $ssh_dst: &>/dev/null
-    ssh $ssh_opts $ssh_dst "sudo ip ro d default; sudo ip ro a default via $controller_ip" 2>/dev/null
-    ssh $ssh_opts $ssh_dst "sudo bash puppet-openstack-configure -h $node_hostname $controller_hostname $controller_ip"
+    ssh $ssh_opts $ssh_dst "sudo bash network-setup client $node_hostname $controller_ip" 2>/dev/null
+    ssh $ssh_opts $ssh_dst "sudo bash puppet-openstack-configure $verbose -h $node_hostname $controller_hostname $controller_ip"
     scp $ssh_opts $ssh_dst:$node_hostname.log .
 }
 
 # global variables
 user=ubuntu
-files=(puppet-openstack-configure site.pp node-setup masquerade)
+files=(puppet-openstack-configure site.pp node-setup network-setup)
 ssh_opts="-qo UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
 declare -a pids
 

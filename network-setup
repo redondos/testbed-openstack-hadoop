@@ -1,0 +1,75 @@
+#!/bin/bash
+# 2013 Angelo Olivera <aolivera@gmail.com>
+# Helper script to set up controller nodes as NAT routers and modify routing
+# table on clients
+
+# usage: ./network client $myhostname $serverhostname
+#        ./network server $myhostname
+
+# Color escape codes
+RESTORE='\033[0m'
+RED='\033[00;31m'
+GREEN='\033[00;32m'
+YELLOW='\033[00;33m'
+
+msg() {
+    case "$1" in
+        error)  echo -ne "$RED"                 >&2
+                echo "$0@$hostname: ${@:2}"     >&2
+                ;;
+        warn)   echo -ne "$YELLOW"              >&2
+                echo "$0@$hostname: ${@:2}"     >&2
+                ;;
+        *)      echo -ne "$GREEN"
+                echo "$0@$hostname: ${@}"
+    esac
+
+    # restore normal colors
+    echo -ne "$restore"
+    echo -ne "$restore"    >&2
+}
+
+sethostname() {
+    hostname="$1"
+    [[ $(hostname) == $hostname ]] && return 0
+    msg "Setting hostname"
+    hostname $hostname
+    echo $(hostname) > /etc/hostname
+    grep -q $hostname /etc/hosts && return 0
+    if grep -q 127.0.0.1 /etc/hosts; then
+        sed -ie "s/127.0.0.1.*/& $hostname/" /etc/hosts
+    else
+        echo "127.0.0.1 localhost $hostname" >> /etc/hosts
+    fi
+}
+
+setup_masquerade() {
+    if ! /sbin/iptables -t nat -C POSTROUTING -o eth0 -j MASQUERADE 2>/dev/null; then
+        msg "Configuring as NAT router"
+        echo 1 > /proc/sys/net/ipv4/ip_forward
+        /sbin/iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+        /sbin/iptables -A FORWARD -i eth0 -o etho -m state --state RELATED,ESTABLISHED -j ACCEPT
+        /sbin/iptables -A FORWARD -i eth0 -o eth0 -j ACCEPT
+    fi
+}
+
+set_default_route() {
+    if ! ip ro g 1.1.1.1 | grep -q $1; then
+        msg "Setting default route"
+        sudo ip ro d default
+        sudo ip ro a default via $1
+    fi
+}
+
+if [[ -n $2 ]]; then
+    sethostname $2
+fi
+
+if [[ "$1" == client ]]; then
+    set_default_route $3
+elif [[ "$1" == server ]]; then
+    setup_masquerade
+else
+    msg error "Unknown action: $@"
+fi
+
