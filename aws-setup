@@ -121,7 +121,7 @@ def main():
 
     parser = OptionParser(usage="usage: %prog [options] testbed")
 
-    parser.add_option("-s", "--subnet", dest="subnet", default="10.0.0.0/24", metavar="SUBNET", 
+    parser.add_option("-s", "--subnet", dest="subnet", default="10.0.0.0/24", metavar="SUBNET",
                         help="subnet to use for Amazon VPC, in CIDR notation  "
                         '       default: "10.0.0.0/24"')
 
@@ -237,7 +237,7 @@ def main():
     subnet = check_subnet(c, vpc, subnet_ip)
     if subnet:
         warn("Reusing existing subnet: {}".format(subnet.id))
-    else: 
+    else:
         try:
             # Subnet doesn't exist, create one
             subnet = c.create_subnet(vpc.id, subnet_ip)
@@ -302,6 +302,21 @@ def main():
         except:
             warn("Found firewall rules in security group: " + sg.id + ". Skipping")
 
+    # Allocate or reuse elastic ip
+    ip = find_elastic_ip(c)
+    if ip:
+        warn("Found free Elastic IP: {}".format(ip.public_ip))
+        answer = "y"
+        if not options.yes:
+            answer = raw_input("\nOK to reuse it? Y/n ")
+    if not ip or answer.lower() == "n" or answer.lower() == "no":
+        try:
+            ip = c.allocate_address("vpc")
+        except:
+            print traceback.format_exc().split('\n')[-2]
+            error("Could not allocate Elastic IP")
+        warn("Allocated Elastic IP: {}".format(ip.public_ip))
+
     # Run instances in VPC
     ec2 = {} # dictionary of instances
     if options.instances >= 2: # TODO: single-node setup
@@ -346,20 +361,7 @@ def main():
             tags["Name"] = testbed_name + "-compute" + str(node)
             c.create_tags([compute.id], tags)
 
-        ip = find_elastic_ip(c)
-        if ip:
-            warn("Found free Elastic IP: {}".format(ip.public_ip))
-            answer = "y"
-            if not options.yes:
-                answer = raw_input("OK to reuse it? Y/n ")
-        if not ip or answer.lower() == "n" or answer.lower() == "no":
-            try:
-                ip = c.allocate_address("vpc")
-            except:
-                print traceback.format_exc().split('\n')[-2] 
-                error("Could not allocate Elastic IP")
-            warn("Allocated Elastic IP: {}".format(ip.public_ip))
-
+        # Attach elastic ip to controller
         warn("Waiting for controller to spawn to attach IP")
         if not attach_ip(c, ec2[0].instances[0].id, ip, 120):
             error("Timeout reached while trying to attach Elastic IP. Aborting.")
