@@ -153,8 +153,6 @@ def main():
     desc_file = testbed_name + "/" + testbed_name + ".desc"
     answer = "yes"
 
-    info("{}: Writing description to {}\n".format(sys.argv[0][2:], desc_file))
-
     info("Testbed name: " + testbed_name)
     info("Subnet: " + options.subnet)
     info("SSH key: " + options.ssh_key)
@@ -221,7 +219,7 @@ def main():
         f.write("vpc.region.name=" + vpc.region.name + "\n")
         answer = "y"
         if not options.yes:
-            answer = raw_input("OK to reuse it? Y/n ")
+            answer = raw_input("\nOK to reuse it? Y/n ")
 
     if not vpc or answer.lower() == "n" or answer.lower() == "no":
         try:
@@ -233,7 +231,7 @@ def main():
             error( "".join(e[2]))
 
     # Check if subnet exists
-    subnet_ip=str(vpc_base) + '/' + str(int(vpc_size)+1)
+    subnet_ip=str(vpc_base) + '/' + str(int(vpc_size))
     subnet = check_subnet(c, vpc, subnet_ip)
     if subnet:
         warn("Reusing existing subnet: {}".format(subnet.id))
@@ -367,6 +365,8 @@ def main():
             error("Timeout reached while trying to attach Elastic IP. Aborting.")
         info("Attached Elastic IP")
         f.write("controller.elastic_ip={}\n".format(ip.public_ip))
+
+    info("Wrote description file: " + desc_file)
 
     f.close()
 
