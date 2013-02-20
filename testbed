@@ -4,7 +4,7 @@
 # Control testbed from command-line
 #
 
-import sys, os, time
+import sys, os, time, subprocess
 from boto.vpc import VPCConnection
 from optparse import OptionParser
 import traceback
@@ -48,10 +48,13 @@ def awserror(reason, exit=10):
 
 
 def main():
-    parser = OptionParser(usage="usage: %prog [options] start/stop testbed")
+    parser = OptionParser(usage="usage: %prog [options] start|stop|status|describe|ssh|configure testbed")
 
     parser.add_option("-y", "--yes", action="store_true", dest="yes", default=False,
                         help="answer yes to all questions              ")
+
+    parser.add_option("-v", "--verbose", action="store_true", dest="verbose", default=False,
+                        help="display verbose progress              ")
 
     (options, args) = parser.parse_args()
 
@@ -136,6 +139,17 @@ def main():
                 for key, value in c.get_instance_attribute(testbed_instance, attribute).viewitems():
                     print key + ":" + " "*(14-len(key)) + "\t" + value
             j += 1
+            print ""
+
+    elif command == "ssh":
+        keyfile = testbed + "/" + T["ssh_key"] + ".pem"
+        subprocess.call("ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -i " + keyfile + " ubuntu@" + T["elastic_ip"], shell=True)
+
+    elif command == "configure":
+        cmdline = [os.getcwd() + "/node-setup", testbed]
+        if options.verbose: cmdline.append("-v")
+        subprocess.call(cmdline)
+
     else:
         parser.print_usage()
         error("Unknown command: " + command)

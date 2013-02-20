@@ -247,7 +247,7 @@ if [[ -z $node ]]; then
     for node_hostname in ${hosts[@]}; do
         node_ip=${ips[$i]}
         msg "Setting up node: $node_hostname ($node_ip)"
-        ssh $ssh_opts $ssh_dst "sudo bash $0 $verbose --node --ip $node_ip --hostname $node_hostname --controller_ip $controller_ip --controller_hostname $controller_hostname --key $ssh_key $testbed" &
+        ssh $ssh_opts $ssh_dst "sudo bash node-setup $verbose --node --ip $node_ip --hostname $node_hostname --controller_ip $controller_ip --controller_hostname $controller_hostname --key $ssh_key $testbed" &
         pids+=($!)
     done
 
