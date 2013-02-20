@@ -364,7 +364,7 @@ def main():
         if not attach_ip(c, ec2[0].instances[0].id, ip, 120):
             error("Timeout reached while trying to attach Elastic IP. Aborting.")
         info("Attached Elastic IP")
-        f.write("controller.elastic_ip={}\n".format(ip.public_ip))
+        f.write("elastic_ip={}\n".format(ip.public_ip))
 
     info("Wrote description file: " + desc_file)
 
