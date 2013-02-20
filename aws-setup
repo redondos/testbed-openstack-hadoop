@@ -227,6 +227,7 @@ def main():
             vpc = c.create_vpc(vpc_ip)
             info("Created VPC: " + vpc.id)
         except Exception, e:
+            print traceback.format_exc().split('\n')[-2]
             awserror("create VPC")
             error( "".join(e[2]))
 
@@ -242,6 +243,7 @@ def main():
             info("Created subnet: " + subnet.cidr_block)
             f.write("subnet={}\n".format(subnet.cidr_block))
         except Exception, e:
+            print traceback.format_exc().split('\n')[-2]
             awserror("create subnet")
             error( "".join(e[2]))
 
@@ -265,7 +267,7 @@ def main():
                 igw = c.create_internet_gateway()
                 info("Created internet gateway: " + igw.id)
                 attachment = c.attach_internet_gateway(igw.id, vpc.id)
-                info("Attached igw to vpc: " + str(attachment))
+                info("Attached igw to vpc")
             except Exception, e:
                 # Couldn't find unused igw nor create a new one, exit
                 awserror("create or attach internet gateway")
@@ -313,7 +315,7 @@ def main():
         except:
             print traceback.format_exc().split('\n')[-2]
             error("Could not allocate Elastic IP")
-        warn("Allocated Elastic IP: {}".format(ip.public_ip))
+        info("Allocated Elastic IP: {}".format(ip.public_ip))
 
     # Run instances in VPC
     ec2 = {} # dictionary of instances
