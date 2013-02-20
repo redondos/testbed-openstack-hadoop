@@ -30,7 +30,7 @@ This command will set up one OpenStack controller and one compute instance on
 Amazon VPC.
 
 Options can be passed to these script to modify its settings (like how many
-instances to start), --help will show all command-line switches.
+instances to start), --help will show all command-line options.
 
 
 Detailed:
@@ -42,31 +42,33 @@ the nodes automatically.
 
 The first step is to start some instances on EC2. These instances need to run
 inside our own Virtual Private Cloud (VPC), so that other EC2 users don't have
-access to our machines.
+access to your machines.
 
 aws-setup can set up VPCs, subnets, internet gateways, elastic IPs and spawn a
 given number of instances.
 
-./aws-setup [options] <testbed-name>
+    ./aws-setup [options] <testbed-name>
 
-e.g. ./aws-setup -n 10 -s 10.0.0.0/24 openstack
+    e.g. ./aws-setup -n 10 -s 10.0.0.0/24 openstack
 
 This command will create a VPC with subnet 10.0.0.0/24 and 10 EC2 instances.
-The first one will be named "<testbed-name>-controller" and the rest will be
-numbered "<testbed-name>compute<N>" nodes. The testbed configuration will be
-saved in "openstack/openstack.desc", with items in key=value format.
+The first one will be named "openstack-controller" and the rest will be
+numbered: "openstack-computeN". The testbed configuration will be saved in
+"openstack/openstack.desc", with items in key=value format.
 
 After the nodes are created, they can be configured using node-setup:
 
-./node-setup <testbed-name>
+    ./node-setup <testbed-name>
 
-e.g. ./node-setup openstack
+    e.g. ./node-setup openstack
 
 This will read configuration from openstack/openstack.desc and set up the
-nodes. Progress will be output to the terminal and verbose output will be
-logged to openstack/*log (one file per instance).
+nodes using puppet-openstack-configure, which installs a Puppet server on the
+controller and runs the Puppet agent on all nodes. The puppetlabs-openstack
+modules are used to configure the puppet manifest file, which defines how to
+configure each instance.Progress will be output to the terminal and verbose
+output will be saved to openstack/HOSTNAME.log (one file per instance).
 
-If anything fails, node-setup has a -v switch that 
 
 Verify the setup
 ================
