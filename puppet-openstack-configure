@@ -205,6 +205,14 @@ fi
 controller_hostname=$1
 controller_ip=$2
 
+# if hostname hasn't been specified, assume controller instance
+if [[ -z $options_hostname ]]; then
+    options_hostname=$controller_hostname
+    hostname=$options_hostname
+    msg "Node hostname not specified (--hostname). Assuming this is the controller."
+fi
+hostname=$options_hostname
+
 # by default log to HOSTNAME.log
 if [[ -z $options_logfile ]]; then
     options_logfile=${options_hostname}.log
@@ -213,13 +221,6 @@ msg "Logfile: $options_logfile"
 rm -f "$options_logfile"
 touch "$options_logfile"
 
-# if hostname hasn't been specified, assume controller instance
-if [[ -z $options_hostname ]]; then
-    options_hostname=$controller_hostname
-    hostname=$options_hostname
-    msg "Node hostname not specified (--hostname). Assuming this is the controller."
-fi
-hostname=$options_hostname
 # set hostname and make sure we have an address for the controller
 runcmd sethostname $hostname
 grep -q $controller_hostname /etc/hosts || echo "$controller_ip $controller_hostname" >> /etc/hosts
