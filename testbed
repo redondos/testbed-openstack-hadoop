@@ -124,18 +124,17 @@ def main():
 
     elif command == "describe":
         j = 0
-        for i in instances:
+        for testbed_instance in instances:
             if j == 0:
                 print testbed + "-controller"
                 print "=" * (len(testbed) + 11)
             else:
                 print testbed + "-compute" + str(j)
                 print "=" * (len(testbed) + 9)
-            print "{u'" + "instance" + "': '" + i + "'}"
-            print c.get_instance_attribute(i, "instanceType")
-            print c.get_instance_attribute(i, "kernel")
-            print c.get_instance_attribute(i, "rootDeviceName")
-            print ""
+            print "instance:      \t" + testbed_instance
+            for attribute in ["instanceType", "kernel", "rootDeviceName"]:
+                for key, value in c.get_instance_attribute(testbed_instance, attribute).viewitems():
+                    print key + ":" + " "*(14-len(key)) + "\t" + value
             j += 1
     else:
         parser.print_usage()
