@@ -109,9 +109,10 @@ def attach_ip(connection, instance_id, ip, wait):
             sys.stdout.flush()
             time.sleep(2)
             wait -= 2
-            if wait == 0:
+            if wait < wait-10:
                 sys.stdout.write('\n')
-                error(traceback.format_exc().split('\n')[-2])
+                warn(traceback.format_exc().split('\n')[-2])
+            if wait == 0:
                 break
     sys.stdout.write('\n')
     sys.stdout.flush()

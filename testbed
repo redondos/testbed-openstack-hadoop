@@ -72,7 +72,12 @@ def main():
     T = {} # testbed settings dictionary
     instances = [] # instances list
 
-    f = open(testbed + "/" + testbed + ".desc", "r")
+    filename = testbed + "/" + testbed + ".desc"
+    try:
+        f = open(filename, "r")
+    except:
+        print filename
+        error("Could not find testbed " + testbed)
     while True:
         line = f.readline()
         if not line: break
@@ -82,17 +87,28 @@ def main():
             if key.endswith(".id"):
                 instances.append(value)
 
-    # pprint(T)
-        
     if command == "start":
-        c.start_instances(instances)
+        info("Starting all instances in testbed " + testbed)
+        try:
+            c.start_instances(instances)
+        except:
+            error(traceback.format_exc().split('\n')[-2])
+
     elif command == "stop":
-        c.stop_instances(instances)
+        info("Stopping all instances in testbed " + testbed)
+        try:
+            c.stop_instances(instances)
+        except:
+            error(traceback.format_exc().split('\n')[-2])
+
     elif command == "terminate":
         answer = raw_input("Are you sure? (y/N) ")
         if answer.lower() == "y" or answer.lower() == "yes":
             warn("Terminating instances: " + " ".join(instances))
-            c.terminate_instances(instances)
+            try:
+                c.terminate_instances(instances)
+            except:
+                error(traceback.format_exc().split('\n')[-2])
         else:
             warn("Cancelling")
     elif command == "describe":
@@ -113,7 +129,6 @@ def main():
     else:
         parser.print_usage()
         error("Unknown command: " + command)
-
 
 if __name__ == "__main__":
     main()
