@@ -118,6 +118,15 @@ def attach_ip(connection, instance_id, ip, wait):
     sys.stdout.flush()
     return attached
 
+def wait_instance(connection, instance):
+    while True:
+        time.sleep(1)
+        try:
+            if connection.get_all_instances([instance]):
+                break
+        except:
+            print traceback.format_exc().split('\n')[-2]
+
 def main():
 
     parser = OptionParser(usage="usage: %prog [options] testbed")
@@ -330,7 +339,10 @@ def main():
         controller = ec2[0].instances[0]
 
         info("Created controller instance: {}".format(controller.id))
-        time.sleep(2)
+
+        # wait until instance is available
+        wait_instance(c, controller.id)
+
         f.write("controller.id={}\n".format(controller.id))
         f.write("controller.private_ip={}\n".format(controller.private_ip_address))
 
@@ -352,7 +364,7 @@ def main():
                 error("Could not create compute{} instance".format(node))
             compute = ec2[node].instances[0]
             info("Created compute{} instance: {}".format(node, compute.id))
-            time.sleep(2)
+            wait_instance(c, compute.id)
             f.write("compute{}.id={}\n".format(node, compute.id))
             f.write("compute{}.private_ip={} \n".format(node, compute.private_ip_address))
 
