@@ -46,6 +46,12 @@ def awserror(reason, exit=10):
     error("Could not " + reason + ". Check AWS Console: https://console.aws.amazon.com/vpc/")
     sys.exit(exit)
 
+def configure_testbed(testbed, args=None):
+    print args
+    sys.exit(0)
+    cmdline = [os.getcwd() + "/node-setup", testbed]
+    if options.verbose: cmdline.append("-v")
+    subprocess.call(cmdline)
 
 def main():
     parser = OptionParser(usage="usage: %prog [options] start|stop|status|describe|ssh|configure testbed")
@@ -62,15 +68,15 @@ def main():
         parser.print_usage()
         sys.exit(1)
 
-    command = args[0]
+    command = args.pop(0)
 
     if command != "list":
 
-        if len(args) != 2:
+        if not len(args):
             parser.print_usage()
             sys.exit(1)
 
-        testbed = args[1]
+        testbed = args.pop(0)
 
         T = {} # testbed settings dictionary
         instances = [] # instances list
@@ -131,14 +137,22 @@ def main():
 
     elif command == "describe":
         j = 0
+        print "testbed description"
+        print "=" * 19
+        print "name:      \t" + testbed
+        print "elastic_ip:   \t" + T["elastic_ip"]
+        print ""
         for testbed_instance in instances:
             if j == 0:
-                print testbed + "-controller"
-                print "=" * (len(testbed) + 11)
+                name = "controller"
+                print name
+                print "=" * 10
             else:
-                print testbed + "-compute" + str(j)
-                print "=" * (len(testbed) + 9)
+                name = "compute" + str(j)
+                print name
+                print "=" * 8
             print "instance:      \t" + testbed_instance
+            print "internal ip:   \t" + T[name + ".private_ip"]
             for attribute in ["instanceType", "kernel", "rootDeviceName"]:
                 for key, value in c.get_instance_attribute(testbed_instance, attribute).viewitems():
                     print key + ":" + " "*(14-len(key)) + "\t" + value
@@ -150,9 +164,7 @@ def main():
         subprocess.call("ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -i " + keyfile + " ubuntu@" + T["elastic_ip"], shell=True)
 
     elif command == "configure":
-        cmdline = [os.getcwd() + "/node-setup", testbed]
-        if options.verbose: cmdline.append("-v")
-        subprocess.call(cmdline)
+        configure_testbed(testbed, args)
 
     elif command == "list":
         for dir in os.listdir(os.getcwd()):
