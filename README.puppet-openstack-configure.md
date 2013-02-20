@@ -1,72 +1,63 @@
-OpenStack nodes on Amazon Web Services
-======================================
+puppet-openstack-configure
+==========================
 
-Automate the creation of EC2 instances and the configuration of OpenStack nodes
-using Puppet.
+Automate the configuration of OpenStack nodes using Puppet.
 
-Software used:
-- Puppet
-- Ubuntu Server 12.04
-- OpenStack Folsom (2012.2)
+Easily spin off OpenStack Folsom (2012.2) controller, compute and storage nodes using Puppet on Amazon EC2/VPC.
 
-    * Controller:
-        * mysql
-        * rabbitmq
-        * keystone
-        * glance
-        * nova
+* Controller:
+    * mysql
+    * rabbitmq
+    * keystone
+    * glance
+    * nova
 
-    * Compute node:
-        * nova (only compute and network components)
+* Compute node:
+    * nova (only compute and network components)
+
+* Storage node:
+    * swift (TODO)
 
 Deployment
 ==========
 
-Brief:
------
-    ./aws-setup testbed && ./node-setup testbed
-
-This command will set up one OpenStack controller and one compute instance on
-Amazon VPC.
-
-Options can be passed to these script to modify its settings (like how many
-instances to start), --help will show all command-line switches.
-
-
-Detailed:
+Firewall
 --------
+Allow connectivity on Puppet, OpenStack and third party service ports.
 
-There are many ways to use these scripts, they can run standalone (in order to
-have more fine-tuned control of the nodes, or using node-setup, which configures
-the nodes automatically.
+* (EC2 -> Network & Security ->Elastic IPs)
+Assigned Elastic IP address to controller: [CONTROLLER_IP]
 
-The first step is to start some instances on EC2. These instances need to run
-inside our own Virtual Private Cloud (VPC), so that other EC2 users don't have
-access to our machines.
+* (EC2 -> Network & Security -> Security Groups)
+    - Allowed incoming connections to port 8774 from any IP address.
+    - Allowed incoming connections to ports 1-65535 from 10.0.0.0/8 subnet.
 
-aws-setup can set up VPCs, subnets, internet gateways, elastic IPs and spawn a
-given number of instances.
+TODO: automate this process
 
-./aws-setup [options] <testbed-name>
+FIXME: connectivity between controller and instances
 
-e.g. ./aws-setup -n 10 -s 10.0.0.0/24 openstack
+VPC
+---
+Create a VPC according to http://docs.aws.amazon.com/AmazonVPC/latest/GettingStartedGuide/Wizard.html
 
-This command will create a VPC with subnet 10.0.0.0/24 and 10 EC2 instances.
-The first one will be named "<testbed-name>-controller" and the rest will be
-numbered "<testbed-name>compute<N>" nodes. The testbed configuration will be
-saved in "openstack/openstack.desc", with items in key=value format.
+* Create Internet Gateway
+* Create Routing Table
+* Create route 0.0.0.0/0 via IGW
+* Associate route with VPC
 
-After the nodes are created, they can be configured using node-setup:
+Hostnames
+---------
+Controller hostname must match /master/
+Compute hostnames must match /compute/
 
-./node-setup <testbed-name>
+Configure node
+--------------
 
-e.g. ./node-setup openstack
+    wget https://raw.github.com/redondos/puppet-openstack-configure/master/puppet-openstack-configure
+    chmod +x puppet-openstack-configure
+    sudo ./puppet-openstack-configure vpc-compute2.internal vpc-controller.internal 10.0.0.64
 
-This will read configuration from openstack/openstack.desc and set up the
-nodes. Progress will be output to the terminal and verbose output will be
-logged to openstack/*log (one file per instance).
-
-If anything fails, node-setup has a -v switch that 
+Sample output (compute node): http://pastebin.com/LAMKXPuu
 
 Verify the setup
 ================
@@ -89,33 +80,25 @@ Services
 Horizon web dashboard
 ---------------------
 
+Check credentials in /root/openrc, by default 'admin'/'admin'
+
 Login to horizon: http://[CONTROLLER_HOSTNAME]/horizon/
 
-Default username/password: 'admin'/'admin'
-
-It can be changed in site.pp and re-running node-setup.
-
-Project -> Images and snapshots -> Create image:
-    Name: cirros
-    Location: http://download.cirros-cloud.net/0.3.1/cirros-0.3.1-i386-disk.img
-    Format: QCOW2
-    Public: yes
-
-OpenStack instances can now be spawned from the Horizon dashboard by clicking
-on the Launch button next to the image name. (Note: a keypair is not necessary to
-access cirros images, but it will be for Ubuntu server cloud images.)
-
-Credentials
------------
-
-    source <testbed-name>/openrc
+Sample: http://i.troll.ws/a0ab7990.png
 
 Image upload and instance creation
 ----------------------------------
 
 Script provided by Puppet recipes.
 
+    wget https://raw.github.com/redondos/puppet-openstack-configure/master/test_nova.sh
     bash -x test_nova.sh
+
+
+Credentials
+-----------
+
+    source /root/openrc
 
 Keystone
 --------
@@ -171,9 +154,9 @@ Spawn Ubuntu server instance
 
     wget http://uec-images.ubuntu.com/quantal/current/quantal-server-cloudimg-amd64.tar.gz
     tar zvxf quantal-server-cloudimg-amd64.tar.gz
-
+    
     glance add name=quantal-server-cloudimg-amd64 disk_format=qcow2 container_format=bare < quantal-server-cloudimg-amd64.img
-
+    
     imgid=$(glance index | awk '/quantal/{print $1; quit}')
     nova --no-cache boot --flavor 3 --image $imgid --key_name $USER quantal-server-amd64
 
