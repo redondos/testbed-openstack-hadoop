@@ -58,37 +58,41 @@ def main():
 
     (options, args) = parser.parse_args()
 
-    if len(args) != 2:
+    if not len(args):
         parser.print_usage()
         sys.exit(1)
 
     command = args[0]
-    testbed = args[1]
 
-    # Create connection with AWS
-    try:
-        c = VPCConnection(os.environ['AWS_ACCESS_KEY'], os.environ['AWS_SECRET_KEY'])
-    except:
-        error("Could not find AWS credentials. Please set environment variables AWS_ACCESS_KEY and AWS_SECRET_KEY.")
+    if command != "list":
 
+        if len(args) != 2:
+            parser.print_usage()
+            sys.exit(1)
 
-    T = {} # testbed settings dictionary
-    instances = [] # instances list
+        testbed = args[1]
 
-    filename = testbed + "/" + testbed + ".desc"
-    try:
-        f = open(filename, "r")
-    except:
-        print filename
-        error("Could not find testbed " + testbed)
-    while True:
-        line = f.readline()
-        if not line: break
-        key, value = line.strip().split("=")
-        T[key] = value
-        if key.startswith("controller") or key.startswith("compute"):
-            if key.endswith(".id"):
-                instances.append(value)
+        T = {} # testbed settings dictionary
+        instances = [] # instances list
+        filename = testbed + "/" + testbed + ".desc"
+        try:
+            f = open(filename, "r")
+        except:
+            error("Could not find testbed " + testbed)
+        while True:
+            line = f.readline()
+            if not line: break
+            key, value = line.strip().split("=")
+            T[key] = value
+            if key.startswith("controller") or key.startswith("compute"):
+                if key.endswith(".id"):
+                    instances.append(value)
+
+        # Create connection with AWS
+        try:
+            c = VPCConnection(os.environ['AWS_ACCESS_KEY'], os.environ['AWS_SECRET_KEY'])
+        except:
+            error("Could not find AWS credentials. Please set environment variables AWS_ACCESS_KEY and AWS_SECRET_KEY.")
 
     if command == "start":
         info("Starting all instances in testbed " + testbed)
@@ -149,6 +153,11 @@ def main():
         cmdline = [os.getcwd() + "/node-setup", testbed]
         if options.verbose: cmdline.append("-v")
         subprocess.call(cmdline)
+
+    elif command == "list":
+        for dir in os.listdir(os.getcwd()):
+            if os.path.exists(dir + "/" + dir + ".desc"):
+                print dir
 
     else:
         parser.print_usage()
