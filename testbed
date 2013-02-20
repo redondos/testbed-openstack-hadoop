@@ -54,7 +54,7 @@ def configure_testbed(testbed, args=None):
     subprocess.call(cmdline)
 
 def main():
-    parser = OptionParser(usage="usage: %prog [options] start|stop|status|describe|ssh|configure testbed")
+    parser = OptionParser(usage="usage: %prog [options] list|start|stop|status|describe|configure|ssh testbed")
 
     parser.add_option("-y", "--yes", action="store_true", dest="yes", default=False,
                         help="answer yes to all questions              ")
