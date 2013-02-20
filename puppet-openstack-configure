@@ -80,6 +80,8 @@ sethostname() {
 }
 
 install_puppet_modules() {
+    oldcwd=$PWD
+
     # openstack modules from puppet forge
     modules=/etc/puppet/modules
     if [ ! -e $modules/openstack ]; then
@@ -107,12 +109,18 @@ install_puppet_modules() {
             cd - >/dev/null
         done
     fi
+
+    cd $oldcwd
 }
 
 configure_puppet() {
     master=$1
     conf=/etc/puppet/puppet.conf
     if ! grep -q $master $conf; then
+        if ! dpkg -s puppet &>/dev/null; then
+            msg error "Puppet not installed?"
+            exit 1
+        fi
         msg "Configuring: Puppet agent"
         echo -e "\n[agent]\nserver = $master\n" >> $conf
     fi
@@ -144,6 +152,8 @@ configure_puppetmaster() {
         cp site.pp /etc/puppet/manifests
         chown puppet:puppet /etc/puppet/manifests/site.pp
     else
+        msg "Configuring: Puppet server (generic manifest)"
+        mkdir -p /etc/puppet/manifests
         curl https://raw.github.com/redondos/puppet-openstack-configure/master/site.pp > /etc/puppet/manifests/site.pp
     fi
 
@@ -205,6 +215,14 @@ fi
 controller_hostname=$1
 controller_ip=$2
 
+# if hostname hasn't been specified, assume controller instance
+if [[ -z $options_hostname ]]; then
+    options_hostname=$controller_hostname
+    hostname=$options_hostname
+    msg "Node hostname not specified (--hostname). Assuming this is the controller."
+fi
+hostname=$options_hostname
+
 # by default log to HOSTNAME.log
 if [[ -z $options_logfile ]]; then
     options_logfile=${options_hostname}.log
@@ -213,13 +231,6 @@ msg "Logfile: $options_logfile"
 rm -f "$options_logfile"
 touch "$options_logfile"
 
-# if hostname hasn't been specified, assume controller instance
-if [[ -z $options_hostname ]]; then
-    options_hostname=$controller_hostname
-    hostname=$options_hostname
-    msg "Node hostname not specified (--hostname). Assuming this is the controller."
-fi
-hostname=$options_hostname
 # set hostname and make sure we have an address for the controller
 runcmd sethostname $hostname
 grep -q $controller_hostname /etc/hosts || echo "$controller_ip $controller_hostname" >> /etc/hosts

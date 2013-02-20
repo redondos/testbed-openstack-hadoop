@@ -183,7 +183,7 @@ configure_node() {
 hostname=$(hostname)
 user=ubuntu
 files=(puppet-openstack-configure site.pp node-setup network-setup)
-ssh_opts="-qo UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+ssh_opts="$verbose -qo UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
 declare -a pids
 
 # if testbed file wasn't specified in the command-line,
