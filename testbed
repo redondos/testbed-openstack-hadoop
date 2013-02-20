@@ -111,6 +111,17 @@ def main():
                 error(traceback.format_exc().split('\n')[-2])
         else:
             warn("Cancelling")
+
+    elif command == "status":
+        j = 0
+        for testbed_instance in instances:
+            for reservation in c.get_all_instances(testbed_instance):
+                if j == 0:
+                    print testbed + "-controller:\t" + reservation.instances[0].state
+                else:
+                    print testbed + "-compute" + str(j) + ":  \t" + reservation.instances[0].state
+                j += 1
+
     elif command == "describe":
         j = 0
         for i in instances:
