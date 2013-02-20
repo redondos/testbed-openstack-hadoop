@@ -80,6 +80,8 @@ sethostname() {
 }
 
 install_puppet_modules() {
+    oldcwd=$PWD
+
     # openstack modules from puppet forge
     modules=/etc/puppet/modules
     if [ ! -e $modules/openstack ]; then
@@ -107,12 +109,18 @@ install_puppet_modules() {
             cd - >/dev/null
         done
     fi
+
+    cd $oldcwd
 }
 
 configure_puppet() {
     master=$1
     conf=/etc/puppet/puppet.conf
     if ! grep -q $master $conf; then
+        if ! dpkg -s puppet &>/dev/null; then
+            msg error "Puppet not installed?"
+            exit 1
+        fi
         msg "Configuring: Puppet agent"
         echo -e "\n[agent]\nserver = $master\n" >> $conf
     fi
@@ -144,6 +152,8 @@ configure_puppetmaster() {
         cp site.pp /etc/puppet/manifests
         chown puppet:puppet /etc/puppet/manifests/site.pp
     else
+        msg "Configuring: Puppet server (generic manifest)"
+        mkdir -p /etc/puppet/manifests
         curl https://raw.github.com/redondos/puppet-openstack-configure/master/site.pp > /etc/puppet/manifests/site.pp
     fi
 
