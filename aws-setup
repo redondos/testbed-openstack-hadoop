@@ -119,13 +119,16 @@ def attach_ip(connection, instance_id, ip, wait):
     return attached
 
 def wait_instance(connection, instance):
+    i = 0
     while True:
+        i += 1
         time.sleep(1)
         try:
             if connection.get_all_instances([instance]):
                 break
         except:
-            print traceback.format_exc().split('\n')[-2]
+            if i >= 10:
+                error("Error creating instance ({}). Check AWS control panel.".format(instance))
 
 def main():
 
