@@ -4,7 +4,7 @@
 # Control testbed from command-line
 #
 
-import sys, os, time, subprocess
+import sys, os, time, subprocess, shutil
 from boto.vpc import VPCConnection
 from optparse import OptionParser
 import traceback
@@ -46,21 +46,60 @@ def awserror(reason, exit=10):
     error("Could not " + reason + ". Check AWS Console: https://console.aws.amazon.com/vpc/")
     sys.exit(exit)
 
-def configure_testbed(testbed, args=None):
-    print args
-    sys.exit(0)
-    cmdline = [os.getcwd() + "/node-setup", testbed]
+def create_aws_testbed(testbed, options):
+    cmdline = ["/usr/bin/env", "python", "aws-setup", testbed]
+    cmdline += ["-k", options.ssh_key, "-s", options.subnet, "-n", str(options.instances), "-f", options.flavor]
     if options.verbose: cmdline.append("-v")
-    subprocess.call(cmdline)
+    cmdline.append("-y")
+    return subprocess.call(cmdline)
+
+def configure_testbed(testbed, options):
+    cmdline = ["/usr/bin/env", "bash", "node-setup", testbed]
+    return subprocess.call(cmdline)
+
+def parse_desc(testbed):
+    T = {} # testbed settings dictionary
+    instances = [] # instances list
+    filename = testbed + "/" + testbed + ".desc"
+    try:
+        f = open(filename, "r")
+    except:
+        error("Could not find testbed " + testbed)
+    while True:
+        line = f.readline()
+        if not line: break
+        key, value = line.strip().split("=")
+        T[key] = value
+        if key.startswith("controller") or key.startswith("compute"):
+            if key.endswith(".id"):
+                instances.append(value)
+    return T, instances
 
 def main():
-    parser = OptionParser(usage="usage: %prog [options] list|start|stop|status|describe|configure|ssh testbed")
+    parser = OptionParser(usage="usage: %prog [options] start|stop|status|destroy|list|describe|create|configure|ssh testbed")
 
     parser.add_option("-y", "--yes", action="store_true", dest="yes", default=False,
                         help="answer yes to all questions              ")
 
     parser.add_option("-v", "--verbose", action="store_true", dest="verbose", default=False,
                         help="display verbose progress              ")
+
+    parser.add_option("-s", "--subnet", dest="subnet", default="10.0.0.0/24", metavar="SUBNET",
+                        help="subnet to use for Amazon VPC, in CIDR notation  "
+                        '       default: "10.0.0.0/24"')
+
+    parser.add_option("-k", "--key", dest="ssh_key", default="openstack", metavar="KEY",
+                        help="name of ssh key. it will be created if not nonexistent    "
+                        '       default: "openstack"' )
+
+    parser.add_option("-f", "--flavor", dest="flavor", default="m1.medium", metavar="FLAVOR",
+                        help="instance type: t1.micro, m1.small, m3.xlarge, etc. "
+                        '       default: "m1.medium"' )
+
+    parser.add_option("-n", "--instances", dest="instances", default=2, metavar="INSTANCES",
+                        help="number of instances to spawn.                 "
+                        "       if set to 1, a single node setup will be used."
+                        "       default: 2")
 
     (options, args) = parser.parse_args()
 
@@ -70,35 +109,37 @@ def main():
 
     command = args.pop(0)
 
-    if command != "list":
+    # Create connection with AWS
+    try:
+        c = VPCConnection(os.environ['AWS_ACCESS_KEY'], os.environ['AWS_SECRET_KEY'])
+    except:
+        error("Could not find AWS credentials. Please set environment variables AWS_ACCESS_KEY and AWS_SECRET_KEY.")
 
-        if not len(args):
-            parser.print_usage()
-            sys.exit(1)
+    if command == "list":
+        for dir in os.listdir(os.getcwd()):
+            if os.path.exists(dir + "/" + dir + ".desc"):
+                print dir
+        sys.exit(0)
 
-        testbed = args.pop(0)
+    elif command == "help":
+        parser.print_help()
+        sys.exit(0)
 
-        T = {} # testbed settings dictionary
-        instances = [] # instances list
-        filename = testbed + "/" + testbed + ".desc"
-        try:
-            f = open(filename, "r")
-        except:
-            error("Could not find testbed " + testbed)
-        while True:
-            line = f.readline()
-            if not line: break
-            key, value = line.strip().split("=")
-            T[key] = value
-            if key.startswith("controller") or key.startswith("compute"):
-                if key.endswith(".id"):
-                    instances.append(value)
+    # find testbed name in command-line arguments
+    if not len(args):
+        parser.print_usage()
+        sys.exit(1)
+    testbed = args.pop(0)
 
-        # Create connection with AWS
-        try:
-            c = VPCConnection(os.environ['AWS_ACCESS_KEY'], os.environ['AWS_SECRET_KEY'])
-        except:
-            error("Could not find AWS credentials. Please set environment variables AWS_ACCESS_KEY and AWS_SECRET_KEY.")
+    if command == "create":
+        ret = create_aws_testbed(testbed, options)
+        if ret:
+            sys.exit(ret)
+        else:
+            sys.exit(configure_testbed(testbed, options))
+
+    # read testbed description file into vars
+    T, instances = parse_desc(testbed)
 
     if command == "start":
         info("Starting all instances in testbed " + testbed)
@@ -114,7 +155,7 @@ def main():
         except:
             error(traceback.format_exc().split('\n')[-2])
 
-    elif command == "terminate":
+    elif command == "destroy":
         answer = raw_input("Are you sure? (y/N) ")
         if answer.lower() == "y" or answer.lower() == "yes":
             warn("Terminating instances: " + " ".join(instances))
@@ -122,6 +163,12 @@ def main():
                 c.terminate_instances(instances)
             except:
                 error(traceback.format_exc().split('\n')[-2])
+
+            answer = raw_input("Remove testbed directory? (containing log files, description file, ssh key) (y/N) ")
+            if answer.lower() == "y" or answer.lower() == "yes":
+                shutil.rmtree(testbed)
+                warn("Removed " + testbed)
+
         else:
             warn("Cancelling")
 
@@ -164,12 +211,7 @@ def main():
         subprocess.call("ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -i " + keyfile + " ubuntu@" + T["elastic_ip"], shell=True)
 
     elif command == "configure":
-        configure_testbed(testbed, args)
-
-    elif command == "list":
-        for dir in os.listdir(os.getcwd()):
-            if os.path.exists(dir + "/" + dir + ".desc"):
-                print dir
+        configure_testbed(testbed, options)
 
     else:
         parser.print_usage()
