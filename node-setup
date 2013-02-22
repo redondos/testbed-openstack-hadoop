@@ -164,7 +164,7 @@ configure_controller() {
         sleep 1
     done
 
-    scp $ssh_opts "${files[@]}" $ssh_dst: &>/dev/null
+    scp $ssh_opts "${files[@]}" $ssh_dst: 2>/dev/null
     ssh $ssh_opts $ssh_dst "sudo bash network-setup server $controller_hostname 2>/dev/null"
     ssh $ssh_opts $ssh_dst "sudo bash -c 'if [ ! -e surface-before.log ]; then ps aux > surface-before.log; netstat -putan >> surface-before.log; fi'"
     ssh $ssh_opts $ssh_dst "sudo bash puppet-openstack-configure $verbose -h $controller_hostname -e $elastic_ip $controller_hostname $controller_ip" || return 1
@@ -175,10 +175,10 @@ configure_controller() {
 }
 
 configure_node() {
-    scp $ssh_opts "${files[@]}" $ssh_dst: &>/dev/null
+    scp $ssh_opts "${files[@]}" $ssh_dst: 2>/dev/null
     ssh $ssh_opts $ssh_dst "sudo bash network-setup client $node_hostname $controller_ip" 2>/dev/null
     ssh $ssh_opts $ssh_dst "sudo bash puppet-openstack-configure $verbose -h $node_hostname $controller_hostname $controller_ip" || return 1
-    scp $ssh_opts $ssh_dst:$node_hostname.log . || true
+    scp $ssh_opts $ssh_dst:$node_hostname.log . 2>/dev/null || true
 }
 
 # global variables
@@ -263,7 +263,7 @@ if [[ -z $node ]]; then
         msg "Setup complete. Dashboard: http://${elastic_ip}/horizon"
     fi
 
-    scp $ssh_opts $ssh_dst:$testbed-compute*.log $testbed
+    scp $ssh_opts $ssh_dst:$testbed-compute*.log $testbed 2>/dev/null
     scp $ssh_opts $ssh_dst:surface*.log $testbed 2>/dev/null || true
 
 # configuring node (called recursively from this script)
@@ -281,7 +281,7 @@ else
     else
         msg error "Error configuring $node_hostname";
     fi
-    scp $ssh_opts $ssh_dst:$node_hostname.log $testbed
+    scp $ssh_opts $ssh_dst:$node_hostname.log $testbed 2>/dev/null
     } &
     pids+=($!)
     wait
