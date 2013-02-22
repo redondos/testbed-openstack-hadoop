@@ -188,7 +188,8 @@ def main():
         print "testbed description"
         print "=" * 19
         print "name:      \t" + testbed
-        print "elastic_ip:   \t" + T["elastic_ip"]
+        print "elastic_ip:\t" + T["elastic_ip"]
+        print "horizon:   \t" + "http://" + T["elastic_ip"] + "/horizon"
         print ""
         for testbed_instance in instances:
             if j == 0:
