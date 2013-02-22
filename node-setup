@@ -246,11 +246,13 @@ if [[ -z $node ]]; then
     # Configure compute nodes by recursively calling this script from the
     # controller passing --node, the controller host/ip and the node's internal
     # ip
+    i=0
     for node_hostname in ${hosts[@]}; do
         node_ip=${ips[$i]}
         msg "Setting up node: $node_hostname ($node_ip)"
         ssh $ssh_opts $ssh_dst "sudo bash node-setup $verbose --node --ip $node_ip --hostname $node_hostname --controller_ip $controller_ip --controller_hostname $controller_hostname --key $ssh_key $testbed" &
         pids+=($!)
+        i+=1
     done
 
     wait
