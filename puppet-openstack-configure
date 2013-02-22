@@ -116,7 +116,12 @@ install_puppet_modules() {
 configure_puppet() {
     master=$1
     conf=/etc/puppet/puppet.conf
-    if ! grep -q $master $conf; then
+    if [ ! -e $conf ]; then
+        # puppet not installed?
+        installpkg puppet
+    fi
+
+    if ! grep -q $master $conf 2>/dev/null; then
         if ! dpkg -s puppet &>/dev/null; then
             msg error "Puppet not installed?"
             exit 1
@@ -251,7 +256,12 @@ if [[ $hostname == $controller_hostname ]]; then
 fi
 
 # run puppet to install openstack after removing stale lock (in case Puppet was interrupted)
-ps aux | grep -q puppet.agent || sudo rm /var/lib/puppet/state/agent_catalog_run.lock
+if ps aux | grep -q puppet.agent; then
+    msg warn "Puppet agent running"
+else
+    msg warn "Removing stale lock"
+    sudo rm /var/lib/puppet/state/agent_catalog_run.lock
+fi
 msg "Installing and configuring: OpenStack"
 runcmd puppet agent -t
 
