@@ -170,8 +170,8 @@ def main():
     info("Flavor: " + options.flavor)
     info("Number of instances: " + str(options.instances) + "\n")
 
-    out = "name={}\nsubnet={}\nssh_key={}\nflavor={}\ninstances={}\n"\
-            .format(testbed_name, options.subnet, options.ssh_key, options.flavor, options.instances)
+    out = "name={}\nssh_key={}\nflavor={}\ninstances={}\n"\
+            .format(testbed_name, options.ssh_key, options.flavor, options.instances)
 
     if not os.path.isdir(testbed_name):
         os.mkdir(testbed_name)
@@ -252,11 +252,13 @@ def main():
             # Subnet doesn't exist, create one
             subnet = c.create_subnet(vpc.id, subnet_ip)
             info("Created subnet: " + subnet.cidr_block)
-            f.write("subnet={}\n".format(subnet.cidr_block))
         except Exception, e:
             print traceback.format_exc().split('\n')[-2]
             awserror("create subnet")
             error( "".join(e[2]))
+
+    f.write("subnet.cidr_block={}\n".format(subnet.cidr_block))
+    f.write("subnet.id={}\n".format(subnet.id))
 
     # Check if Internet Gateway exists for VPC
     igw = check_igw(c, vpc)
