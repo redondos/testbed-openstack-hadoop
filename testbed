@@ -188,8 +188,9 @@ def main():
         print "testbed description"
         print "=" * 19
         print "name:      \t" + testbed
-        print "elastic_ip:\t" + T["elastic_ip"]
-        print "horizon:   \t" + "http://" + T["elastic_ip"] + "/horizon"
+        if "elastic_ip" in T:
+            print "elastic_ip:\t" + T["elastic_ip"]
+            print "horizon:   \t" + "http://" + T["elastic_ip"] + "/horizon"
         print ""
         for testbed_instance in instances:
             if j == 0:
@@ -201,7 +202,7 @@ def main():
                 print name
                 print "=" * 8
             print "instance:      \t" + testbed_instance
-            print "internal ip:   \t" + T[name + ".private_ip"]
+            if name+".private_ip" in T: print "internal ip:   \t" + T[name + ".private_ip"]
             for attribute in ["instanceType", "kernel", "rootDeviceName"]:
                 for key, value in c.get_instance_attribute(testbed_instance, attribute).viewitems():
                     print key + ":" + " "*(14-len(key)) + "\t" + value
