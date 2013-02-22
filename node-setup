@@ -166,8 +166,8 @@ configure_controller() {
 
     scp $ssh_opts "${files[@]}" $ssh_dst: &>/dev/null
     ssh $ssh_opts $ssh_dst "sudo bash network-setup server $controller_hostname 2>/dev/null"
-    ssh $ssh_opts $ssh_dst "sudo bash puppet-openstack-configure $verbose -h $controller_hostname -e $elastic_ip $controller_hostname $controller_ip"
-    scp $ssh_opts $ssh_dst:$controller_hostname.log $testbed
+    ssh $ssh_opts $ssh_dst "sudo bash puppet-openstack-configure $verbose -h $controller_hostname -e $elastic_ip $controller_hostname $controller_ip" || return 1
+    scp $ssh_opts $ssh_dst:$controller_hostname.log $testbed || true
     scp $ssh_opts $ssh_dst:/root/openrc $testbed 2>/dev/null || true
     sed -i "s/${controller_hostname}/${elastic_ip}/g" $testbed/openrc 2>/dev/null || true
 }
@@ -175,8 +175,8 @@ configure_controller() {
 configure_node() {
     scp $ssh_opts "${files[@]}" $ssh_dst: &>/dev/null
     ssh $ssh_opts $ssh_dst "sudo bash network-setup client $node_hostname $controller_ip" 2>/dev/null
-    ssh $ssh_opts $ssh_dst "sudo bash puppet-openstack-configure $verbose -h $node_hostname $controller_hostname $controller_ip"
-    scp $ssh_opts $ssh_dst:$node_hostname.log .
+    ssh $ssh_opts $ssh_dst "sudo bash puppet-openstack-configure $verbose -h $node_hostname $controller_hostname $controller_ip" || return 1
+    scp $ssh_opts $ssh_dst:$node_hostname.log . || true
 }
 
 # global variables
