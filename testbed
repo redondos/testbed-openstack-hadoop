@@ -55,6 +55,7 @@ def create_aws_testbed(testbed, options):
 
 def configure_testbed(testbed, options):
     cmdline = ["/usr/bin/env", "bash", "node-setup", testbed]
+    if options.verbose: cmdline.append("-v")
     return subprocess.call(cmdline)
 
 def parse_desc(testbed):
