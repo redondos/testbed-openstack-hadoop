@@ -109,10 +109,8 @@ def attach_ip(connection, instance_id, ip, wait):
             sys.stdout.flush()
             time.sleep(2)
             wait -= 2
-            if wait < wait-10:
-                sys.stdout.write('\n')
-                warn(traceback.format_exc().split('\n')[-2])
             if wait == 0:
+                warn(traceback.format_exc().split('\n')[-2])
                 break
     sys.stdout.write('\n')
     sys.stdout.flush()
@@ -379,7 +377,7 @@ def main():
 
         # Attach elastic ip to controller
         warn("Waiting for controller to spawn to attach IP")
-        if not attach_ip(c, ec2[0].instances[0].id, ip, 120):
+        if not attach_ip(c, ec2[0].instances[0].id, ip, 30):
             error("Timeout reached while trying to attach Elastic IP. Aborting.")
         info("Attached Elastic IP")
         f.write("elastic_ip={}\n".format(ip.public_ip))
