@@ -74,6 +74,7 @@ def parse_desc(testbed):
         if key.startswith("controller") or key.startswith("compute"):
             if key.endswith(".id"):
                 instances.append(value)
+    f.close()
     return T, instances
 
 def main():
