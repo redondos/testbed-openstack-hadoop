@@ -177,12 +177,17 @@ def main():
     elif command == "status":
         j = 0
         for testbed_instance in instances:
-            for reservation in c.get_all_instances(testbed_instance):
-                if j == 0:
-                    print testbed + "-controller:\t" + reservation.instances[0].state
-                else:
-                    print testbed + "-compute" + str(j) + ":  \t" + reservation.instances[0].state
-                j += 1
+            if j == 0:
+                out = testbed + "-controller:\t"
+            else:
+                out = testbed + "-compute" + str(j) + ":  \t"
+            j += 1
+            try:
+                reservation = c.get_all_instances(testbed_instance)
+                out += reservation[0].instances[0].state
+            except:
+                out += "fail"
+            print out
 
     elif command == "describe":
         j = 0
@@ -204,8 +209,11 @@ def main():
             print "instance:      \t" + testbed_instance
             print "internal ip:   \t" + T[name + ".private_ip"]
             for attribute in ["instanceType", "kernel", "rootDeviceName"]:
-                for key, value in c.get_instance_attribute(testbed_instance, attribute).viewitems():
-                    print key + ":" + " "*(14-len(key)) + "\t" + value
+                try:
+                    for key, value in c.get_instance_attribute(testbed_instance, attribute).viewitems():
+                        print key + ":" + " "*(14-len(key)) + "\t" + value
+                except:
+                    None
             j += 1
             print ""
 
