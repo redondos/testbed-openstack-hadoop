@@ -173,21 +173,24 @@ def main():
             error(traceback.format_exc().split('\n')[-2])
 
     elif command == "destroy":
-        answer = raw_input("Are you sure? (y/N) ")
+        answer = "yes"
+        if not options.yes:
+            answer = raw_input("Are you sure? (y/N) ")
         if answer.lower() == "y" or answer.lower() == "yes":
-            warn("Terminating instances: " + " ".join(instances))
+            warn("Terminating instances in " + testbed + ": " + " ".join(instances))
             try:
                 c.terminate_instances(instances)
             except:
-                error(traceback.format_exc().split('\n')[-2])
+                info("Instances already terminated")
 
-            answer = raw_input("Remove testbed directory? (containing log files, description file, ssh key) (y/N) ")
+            if not options.yes:
+                answer = raw_input("Remove testbed directory? (containing log files, description file, ssh key) (y/N) ")
             if answer.lower() == "y" or answer.lower() == "yes":
                 shutil.rmtree(testbed)
-                warn("Removed " + testbed)
+                warn("Removed directory: " + testbed)
 
         else:
-            warn("Cancelling")
+            warn("Canceling")
 
     elif command == "status":
         j = 0
