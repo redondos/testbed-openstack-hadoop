@@ -61,7 +61,7 @@ help() {
     echo "Usage: $0 [options]"
     echo ""
     echo "Commands:"
-    echo "attack"
+    echo "scan: scan specified subnet"
     echo "Options:"
     echo "-h"
     # restore stdout
@@ -102,13 +102,13 @@ while true; do
     esac
 done
 
-if [[ $1 == "attack" ]]; then
-# we should be on surface host, start attack
+if [[ $1 == "scan" ]]; then
+# we should be on surface host, start analysis
     shift
     my_ip=$1
     subnet=$2
     date=$(date +%s)
-    logfile=surface-attack-${date}.log
+    logfile=surface-${date}.log
     if [[ -n $surface_hostname ]]; then
         sethostname $surface_hostname
     fi
@@ -142,10 +142,10 @@ else
     ssh_opts=" -qo UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
     ssh_opts+=" -i $ssh_key.pem"
     ssh_dst=$user@$surface_ip
-    msg "Connecting to surface attack node ($surface_ip)"
-    scp $ssh_opts surface-attack network-setup $ssh_dst:
+    msg "Connecting to attack surface node ($surface_ip)"
+    scp $ssh_opts surface network-setup $ssh_dst:
     ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh network-setup client ${testbed}-surface.ec2.internal $controller_ip" 2>/dev/null
-    cmdline="sudo bash $verbose_sh surface-attack attack $surface_ip $subnet"
+    cmdline="sudo bash $verbose_sh surface scan $surface_ip $subnet"
     if [[ -n $surface_hostname ]]; then
         cmdline+=" --hostname $surface_hostname"
     fi
