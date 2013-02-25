@@ -125,6 +125,7 @@ while true; do
             shift 2;;
         -v|--verbose)
             verbose="-v"
+            verbose_sh="-x"
             set -x
             shift;;
         --)
@@ -141,16 +142,26 @@ parsedesc() {
     while IFS="=" read key value; do
         case $key in
             ssh_key)
-                ssh_key=$value;;
+                ssh_key=$value
+                ;;
             *elastic_ip)
-                elastic_ip=$value;;
+                elastic_ip=$value
+                ;;
             controller.private_ip)
                 controller_hostname=$testbed-${key%%.*}.ec2.internal
                 controller_ip=$value
                 ;;
             compute*.private_ip)
                 hosts+=($testbed-${key%%.*}.ec2.internal)
-                ips+=($value);;
+                ips+=($value)
+                ;;
+            surface*.private_ip)
+                surface_hostname=$testbed-${key%%.*}.ec2.internal
+                surface_ip=$value
+                ;;
+            subnet.cidr_block)
+                subnet=$value
+                ;;
         esac
     done < $1
 }
@@ -165,13 +176,17 @@ configure_controller() {
     done
 
     scp $ssh_opts "${files[@]}" $ssh_dst: 2>/dev/null
-    ssh $ssh_opts $ssh_dst "sudo bash network-setup server $controller_hostname 2>/dev/null"
-    ssh $ssh_opts $ssh_dst "sudo bash -c 'if [ ! -e surface-before.log ]; then ps aux > surface-before.log; netstat -putan >> surface-before.log; fi'"
+    ssh $ssh_opts $ssh_dst "sudo bash network-setup server $controller_hostname" &>/dev/null
     ssh $ssh_opts $ssh_dst "sudo bash puppet-openstack-configure $verbose -h $controller_hostname -e $elastic_ip $controller_hostname $controller_ip" || return 1
     scp $ssh_opts $ssh_dst:$controller_hostname.log $testbed || true
     scp $ssh_opts $ssh_dst:/root/openrc $testbed 2>/dev/null || true
     sed -i "s/${controller_hostname}/${elastic_ip}/g" $testbed/openrc 2>/dev/null || true
-    ssh $ssh_opts $ssh_dst "sudo bash -c 'if [ ! -e surface-after.log ]; then ps aux > surface-after.log; netstat -putan >> surface-after; fi'"
+}
+
+configure_surface() {
+    scp $ssh_opts "${files[@]}" $ssh_dst: 2>/dev/null
+    ssh $ssh_opts $ssh_dst "sudo bash network-setup server $controller_hostname" &>/dev/null
+    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh surface-attack $testbed $ssh_key $controller_ip $surface_ip $subnet"
 }
 
 configure_node() {
@@ -184,8 +199,8 @@ configure_node() {
 # global variables
 hostname=$(hostname)
 user=ubuntu
-files=(puppet-openstack-configure site.pp node-setup network-setup)
-ssh_opts="$verbose -qo UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+files=(puppet-openstack-configure site.pp node-setup network-setup surface-attack)
+ssh_opts="$verbose_sh -qo UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
 declare -a pids
 
 # if testbed file wasn't specified in the command-line,
@@ -228,6 +243,12 @@ if [[ -z $node ]]; then
     files+=($ssh_key_file)
     ssh_dst="$user@$elastic_ip"
 
+    { if [[ -n $surface_ip ]]; then
+        msg warn "Running surface attack (this will take a while)"
+        configure_surface
+    fi
+    }
+
     # Configure controller by connecting via ssh and running
     # puppet-openstack-configure
     { if configure_controller; then
@@ -250,7 +271,7 @@ if [[ -z $node ]]; then
     for node_hostname in ${hosts[@]}; do
         node_ip=${ips[$i]}
         msg "Setting up node: $node_hostname ($node_ip)"
-        ssh $ssh_opts $ssh_dst "sudo bash node-setup $verbose --node --ip $node_ip --hostname $node_hostname --controller_ip $controller_ip --controller_hostname $controller_hostname --key $ssh_key $testbed" &
+        ssh $ssh_opts $ssh_dst "sudo bash node-setup $verbose_sh --node --ip $node_ip --hostname $node_hostname --controller_ip $controller_ip --controller_hostname $controller_hostname --key $ssh_key $testbed" &
         pids+=($!)
         i+=1
     done
