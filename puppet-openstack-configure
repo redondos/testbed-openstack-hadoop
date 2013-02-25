@@ -68,7 +68,7 @@ runcmd() {
 sethostname() {
     hostname="$1"
     [[ $(hostname) == $hostname ]] && return 0
-    msg "Setting hostname"
+    msg "Setting hostname: $hostname"
     hostname $hostname
     echo $(hostname) > /etc/hostname
     grep -q $hostname /etc/hosts && return 0
