@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+#
+# 2013 Angelo Olivera <aolivera@gmail.com>
+#
+
+msg() {
+    case "$1" in
+        error)  echo -ne "$RED"     >&2
+                echo "$0@$hostname: ${@:2}"    >&2
+                exit 1
+                ;;
+        warn)   echo -ne "$YELLOW"  >&2
+                echo "$0@$hostname: ${@:2}"    >&2
+                ;;
+        *)      echo -ne "$GREEN"
+                echo "$0@$hostname: ${@}"
+    esac
+
+    # restore normal colors
+    echo -ne "$restore"
+    echo -ne "$restore" >&2
+}
+
+sethostname() {
+    hostname="$1"
+    [[ $(hostname) == $hostname ]] && return 0
+    msg "Setting hostname"
+    hostname $hostname
+    echo $(hostname) > /etc/hostname
+    grep -q $hostname /etc/hosts && return 0
+    if grep -q 127.0.0.1 /etc/hosts; then
+        sed -ie "s/127.0.0.1.*/& $hostname/" /etc/hosts
+    else
+        echo "127.0.0.1 localhost $hostname" >> /etc/hosts
+    fi
+}
+
+installpkg() {
+    if ! dpkg -s $1 &>/dev/null; then
+        msg "Installing: $1"
+        runcmd aptitude -y install $@
+    fi
+}
+
+runcmd() {
+    if [[ -n $verbose ]]; then
+        "$@" | tee -a $logfile
+    else
+        "$@" &>> $logfile
+    fi
+}
+
+usage() {
+    true
+}
+
+help() {
+    true
+}
+
+if [[ $1 == "attack" ]]; then
+# we should be on surface host, start attack
+    shift
+    my_ip=$1
+    subnet=$2
+    date=$(date +%s)
+    logfile=surface-attack-${date}.log
+    installpkg nmap
+    msg "nmap: scanning subnet $subnet from $my_ip"
+    runcmd nmap -A -oA nmap-${date} $subnet --exclude $my_ip
+    nmap_files=($(ls -t *.nmap))
+    msg "Scan finished: " $(tail -n 1 ${nmap_files[0]})
+else
+# we should be on controller node
+
+    hostname=$(hostname)
+    testbed=$1
+    ssh_key=$2
+    controller_ip=$3
+    surface_ip=$4
+    subnet=$5
+
+    # first run ps/netstat on controller
+    if [[ ! -e surface-controller-before.log ]]; then
+        ps aux > surface-controller-before.log
+        netstat -putan >> surface-controller-before.log
+    else
+        date=$(date +%s)
+        ps aux > surface-controller-${date}.log
+        netstat -putan >> surface-controller-${date}.log
+    fi
+
+    # then connect to surface host and run nmap
+    user=ubuntu
+    ssh_opts="$verbose -qo UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+    ssh_opts+=" -i $ssh_key.pem"
+    ssh_dst=$user@$surface_ip
+    msg "Connecting to surface attack node ($surface_ip)"
+    scp $ssh_opts surface-attack network-setup $ssh_dst:
+    ssh $ssh_opts $ssh_dst "sudo bash $verbose network-setup client ${testbed}-surface.ec2.internal $controller_ip" 2>/dev/null
+    ssh $ssh_opts $ssh_dst "sudo bash $verbose surface-attack attack $surface_ip $subnet"
+    scp $ssh_opts ${ssh_dst}:"*nmap* *xml" . 2>/dev/null
+
+fi
+

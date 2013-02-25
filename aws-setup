@@ -151,6 +151,9 @@ def main():
                         "       if set to 1, a single node setup will be used."
                         "       default: 2")
 
+    parser.add_option("--surface", action="store_true", dest="surface", default=False,
+                        help="create a surface attack node              ")
+
     parser.add_option("-y", "--yes", action="store_true", dest="yes", default=False,
                         help="answer yes to all questions              ")
 
@@ -378,6 +381,22 @@ def main():
             # Create name tags for nodes
             tags["Name"] = testbed_name + "-compute" + str(node)
             c.create_tags([compute.id], tags)
+
+        # create surface node
+        if options.surface:
+            try:
+                node += 1
+                ec2[node] = c.run_instances('ami-3d4ff254', subnet_id=subnet.id, key_name=options.ssh_key, instance_type="t1.micro")
+            except:
+                print traceback.format_exc().split('\n')[-2]
+                error("Could not create surface attack instance.")
+            surface = ec2[node].instances[0]
+            wait_instance(c, surface.id)
+            info("Created surface attack instance: {}".format(surface.id))
+            f.write("surface.id={}\n".format(surface.id))
+            f.write("surface.private_ip={}\n".format(surface.private_ip_address))
+            tags["Name"] = testbed_name + "-surface"
+            c.create_tags([surface.id], tags)
 
         # Attach elastic ip to controller
         warn("Waiting for controller to spawn to attach IP")
