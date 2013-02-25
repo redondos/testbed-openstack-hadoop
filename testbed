@@ -275,8 +275,13 @@ def main():
             # subprocess.call(["ssh"] + ssh_opts + [host, "surface-attack", T["ssh_key"], T["surface.private_ip"], T["subnet.cidr_block"]])
             subprocess.call(["ssh"] + ssh_opts + [host, "/home/ubuntu/surface-attack", testbed, T["ssh_key"], T["controller.private_ip"], T["surface.private_ip"], T["subnet.cidr_block"]])
             subprocess.call(["ssh"] + ssh_opts + [host, "hostname"])
-            subprocess.call(["scp"] + ssh_opts + [host + ":*nmap*", testbed])
-            subprocess.call(["scp"] + ssh_opts + [host + ":*xml", testbed])
+            surfacedir = testbed + "/surface"
+            try:
+                subprocess.os("mkdir " + surfacedir)
+            except:
+                None
+            subprocess.call(["scp"] + ssh_opts + [host + ":*nmap*", surfacedir])
+            subprocess.call(["scp"] + ssh_opts + [host + ":*xml", surfacedir])
     else:
         parser.print_usage()
         error("Unknown command: " + command)
