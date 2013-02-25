@@ -197,7 +197,7 @@ run_surface() {
     # set controller hostname if it isn't configured yet
     # surface node hostname will be set from surface script
     ssh $ssh_opts $ssh_dst "sudo bash network-setup server $controller_hostname" 2>/dev/null
-    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh surface-attack $testbed $ssh_key $controller_ip $surface_ip $subnet --hostname $surface_hostname"
+    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh surface $testbed $ssh_key $controller_ip $surface_ip $subnet --hostname $surface_hostname"
     mkdir -p ${testbed}/surface
     scp $ssh_opts $ssh_dst:"*nmap* *xml" ${testbed}/surface || true
 }
@@ -205,7 +205,7 @@ run_surface() {
 # global variables
 hostname=$(hostname)
 user=ubuntu
-files=(puppet-openstack-configure site.pp node-setup network-setup surface-attack)
+files=(puppet-openstack-configure site.pp node-setup network-setup surface)
 ssh_opts=" -qo UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
 declare -a pids
 
@@ -251,7 +251,7 @@ if [[ -z $node ]]; then
 
     # run surface analysis before setting up openstack
     { if [[ -n $surface_ip ]]; then
-        msg warn "Running surface attack"
+        msg warn "Running attack surface analysis"
         run_surface
     fi
     }
@@ -278,7 +278,7 @@ if [[ -z $node ]]; then
     for node_hostname in ${hosts[@]}; do
         node_ip=${ips[$i]}
         msg "Setting up node: $node_hostname ($node_ip)"
-        ssh $ssh_opts $ssh_dst "sudo $verbose_sh bash node-setup --node --ip $node_ip --hostname $node_hostname --controller_ip $controller_ip --controller_hostname $controller_hostname --key $ssh_key $testbed" &
+        ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh node-setup --node --ip $node_ip --hostname $node_hostname --controller_ip $controller_ip --controller_hostname $controller_hostname --key $ssh_key $testbed" &
         pids+=($!)
         i+=1
     done
@@ -287,7 +287,7 @@ if [[ -z $node ]]; then
 
     # run surface analysis after setting up openstack
     { if [[ -n $surface_ip ]]; then
-        msg warn "Running surface attack"
+        msg warn "Running attack surface analysis"
         run_surface
     fi
     }
@@ -317,8 +317,7 @@ else
     else
         msg error "Error configuring $node_hostname";
     fi
-    mkdir -p ${testbed}/logs
-    scp $ssh_opts $ssh_dst:$node_hostname.log ${testbed}/logs 2>/dev/null
+    scp $ssh_opts $ssh_dst:$node_hostname.log . 2>/dev/null
     } &
     pids+=($!)
     wait

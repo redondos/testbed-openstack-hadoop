@@ -116,7 +116,7 @@ def main():
                         "       default: 2")
 
     parser.add_option("--surface", action="store_true", dest="surface", default=False,
-                        help="create a surface attack node              ")
+                        help="create an attack surface node              ")
 
     (options, args) = parser.parse_args()
 
@@ -250,11 +250,11 @@ def main():
                 surface_reservation = c.run_instances('ami-3d4ff254', subnet_id=T["subnet.id"], key_name=T["ssh_key"], instance_type="t1.micro")
             except:
                 print traceback.format_exc().split('\n')[-2]
-                error("Could not create surface attack instance")
+                error("Could not create attack surface instance")
 
             surface = surface_reservation.instances[0]
             wait_instance(c, surface.id)
-            info("Created surface attack instance: " +  surface.id)
+            info("Created attack surface instance: " +  surface.id)
 
             tags = {}
             tags["Name"] = testbed + "-surface"
@@ -272,8 +272,7 @@ def main():
             keyfile = testbed + "/" + T["ssh_key"] + ".pem"
             ssh_opts = ["-o", "UserKnownHostsFile=/dev/null", "-o", "StrictHostKeyChecking=no", "-i", keyfile]
             host = "ubuntu@" + T["elastic_ip"]
-            # subprocess.call(["ssh"] + ssh_opts + [host, "surface-attack", T["ssh_key"], T["surface.private_ip"], T["subnet.cidr_block"]])
-            subprocess.call(["ssh"] + ssh_opts + [host, "/home/ubuntu/surface-attack", testbed, T["ssh_key"], T["controller.private_ip"], T["surface.private_ip"], T["subnet.cidr_block"]])
+            subprocess.call(["ssh"] + ssh_opts + [host, "/home/ubuntu/surface", testbed, T["ssh_key"], T["controller.private_ip"], T["surface.private_ip"], T["subnet.cidr_block"]])
             subprocess.call(["ssh"] + ssh_opts + [host, "hostname"])
             surfacedir = testbed + "/surface"
             try:
