@@ -24,7 +24,7 @@ msg() {
 sethostname() {
     hostname="$1"
     [[ $(hostname) == $hostname ]] && return 0
-    msg "Setting hostname"
+    msg "Setting hostname: $hostname"
     hostname $hostname
     echo $(hostname) > /etc/hostname
     grep -q $hostname /etc/hosts && return 0
@@ -55,8 +55,52 @@ usage() {
 }
 
 help() {
-    true
+    # print to stderr
+    exec 5>&1
+    exec 1>&2
+    echo "Usage: $0 [options]"
+    echo ""
+    echo "Commands:"
+    echo "attack"
+    echo "Options:"
+    echo "-h"
+    # restore stdout
+    exec 1>&5
 }
+
+ARGS=$(getopt -o "h" -l "help,hostname:" -n "$0" -- "$@")
+
+if [ $? != 0 ] ; then
+    msg error "error parsing command-line options"
+    exit 1
+fi
+
+eval set -- "$ARGS"
+
+while true; do
+    case "$1" in
+        -h|--help)
+            help
+            exit 0
+            shift;;
+        --hostname)
+            surface_hostname=$2
+            shift 2
+            ;;
+        -v|--verbose)
+            verbose=1
+            verbose_sh="-x"
+            set -x
+            shift
+            ;;
+        --)
+            shift
+            break;;
+        *)
+            msg error "invalid command-line option: $1"
+            break;;
+    esac
+done
 
 if [[ $1 == "attack" ]]; then
 # we should be on surface host, start attack
@@ -65,6 +109,9 @@ if [[ $1 == "attack" ]]; then
     subnet=$2
     date=$(date +%s)
     logfile=surface-attack-${date}.log
+    if [[ -n $surface_hostname ]]; then
+        sethostname $surface_hostname
+    fi
     installpkg nmap
     msg "nmap: scanning subnet $subnet from $my_ip"
     runcmd nmap -A -oA nmap-${date} $subnet --exclude $my_ip
@@ -92,13 +139,17 @@ else
 
     # then connect to surface host and run nmap
     user=ubuntu
-    ssh_opts="$verbose -qo UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+    ssh_opts=" -qo UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
     ssh_opts+=" -i $ssh_key.pem"
     ssh_dst=$user@$surface_ip
     msg "Connecting to surface attack node ($surface_ip)"
     scp $ssh_opts surface-attack network-setup $ssh_dst:
-    ssh $ssh_opts $ssh_dst "sudo bash $verbose network-setup client ${testbed}-surface.ec2.internal $controller_ip" 2>/dev/null
-    ssh $ssh_opts $ssh_dst "sudo bash $verbose surface-attack attack $surface_ip $subnet"
+    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh network-setup client ${testbed}-surface.ec2.internal $controller_ip" 2>/dev/null
+    cmdline="sudo bash $verbose_sh surface-attack attack $surface_ip $subnet"
+    if [[ -n $surface_hostname ]]; then
+        cmdline+=" --hostname $surface_hostname"
+    fi
+    ssh $ssh_opts $ssh_dst "$cmdline"
     scp $ssh_opts ${ssh_dst}:"*nmap* *xml" . 2>/dev/null
 
 fi
