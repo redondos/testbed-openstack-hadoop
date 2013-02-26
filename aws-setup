@@ -104,18 +104,20 @@ def attach_ip(connection, instance_id, ip, wait):
     while not attached:
         try:
             attached = connection.associate_address(instance_id, None, ip.allocation_id)
+            sys.stdout.write('\n')
+            sys.stdout.flush()
         except:
             sys.stdout.write('.')
             sys.stdout.flush()
             time.sleep(2)
             wait -= 2
-            if wait < wait-10:
-                sys.stdout.write('\n')
-                warn(traceback.format_exc().split('\n')[-2])
+            if wait == 10:
+                if not attach_ip(connection, instance_id, find_elastic_ip(connection), wait):
+                    sys.stdout.write('\n')
+                    warn(traceback.format_exc().split('\n')[-2])
+                    return False
             if wait == 0:
                 break
-    sys.stdout.write('\n')
-    sys.stdout.flush()
     return attached
 
 def wait_instance(connection, instance):
