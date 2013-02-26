@@ -71,7 +71,7 @@ def parse_desc(testbed):
         if not line: break
         key, value = line.strip().split("=")
         T[key] = value
-        if key.startswith("controller") or key.startswith("compute"):
+        if key.startswith("controller") or key.startswith("compute") or key.startswith("surface"):
             if key.endswith(".id"):
                 instances.append(value)
     f.close()
@@ -88,6 +88,9 @@ def wait_instance(connection, instance):
         except:
             if i >= 10:
                 error("Error creating instance ({}). Check AWS control panel.".format(instance))
+
+def keys_with_value(D, value):
+ return [k for k, v in D.iteritems() if value in v]
 
 def main():
     parser = OptionParser(usage="usage: %prog [options] start|stop|status|destroy|list|describe|create|configure|ssh testbed")
@@ -195,11 +198,14 @@ def main():
     elif command == "status":
         j = 0
         for testbed_instance in instances:
-            if j == 0:
+            key = "".join(keys_with_value(T, testbed_instance))
+            if key.startswith("controller"):
                 out = testbed + "-controller:\t"
+            elif key.startswith("surface"):
+                out = testbed + "-surface:   \t"
             else:
+                j += 1
                 out = testbed + "-compute" + str(j) + ":  \t"
-            j += 1
             try:
                 reservation = c.get_all_instances(testbed_instance)
                 out += reservation[0].instances[0].state
