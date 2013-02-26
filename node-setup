@@ -192,7 +192,14 @@ configure_node() {
     scp $ssh_opts $ssh_dst:$node_hostname.log . 2>/dev/null || true
 }
 
-run_surface() {
+surface_node() {
+    scp $ssh_opts "${files[@]}" $ssh_dst: 2>/dev/null
+    ssh $ssh_opts $ssh_dst "sudo bash network-setup client $node_hostname $controller_ip" 2>/dev/null
+    ssh $ssh_opts $ssh_dst "sudo bash surface ${node_hostname%%.*}"
+    scp $ssh_opts $ssh_dst:*.log . 2>/dev/null || true
+}
+
+surface_controller() {
     scp $ssh_opts "${files[@]}" $ssh_dst: 2>/dev/null
     # set controller hostname if it isn't configured yet
     # surface node hostname will be set from surface script
@@ -252,7 +259,7 @@ if [[ -z $node ]]; then
     # run surface analysis before setting up openstack
     { if [[ -n $surface_ip ]]; then
         msg warn "Running attack surface analysis"
-        run_surface
+        surface_controller
     fi
     }
 
@@ -285,10 +292,18 @@ if [[ -z $node ]]; then
 
     wait
 
+    i=0
+    for node_hostname in ${hosts[@]}; do
+        node_ip=${ips[$i]}
+        ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh node-setup --node --ip $node_ip --hostname $node_hostname --controller_ip $controller_ip --controller_hostname $controller_hostname --key $ssh_key $testbed" &
+        pids+=($!)
+        i+=1
+    done
+
     # run surface analysis after setting up openstack
     { if [[ -n $surface_ip ]]; then
         msg warn "Running attack surface analysis"
-        run_surface
+        surface_controller
     fi
     }
 

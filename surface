@@ -68,6 +68,34 @@ help() {
     exec 1>&5
 }
 
+surface_scan() {
+# args:
+# node name: used to name the surface scan files
+    if [[ ! -e surface-$1-before.log ]]; then
+        surface_file=surface-$1-before.log
+    else
+        surface_file=surface-$1-$(date +%s)
+    fi
+
+    touch $surface_file
+
+    echo "Process information" >> $surface_file
+    echo "===================" >> $surface_file
+    ps aux >> $surface_file
+
+    echo "Open ports" >> $surface_file
+    echo "==========" >> $surface_file
+    netstat -putan >> $surface_file
+
+    echo "Users" >> $surface_file
+    echo "=====" >> $surface_file
+    awk -F: '{print $1}' /etc/passwd >> $surface_file
+
+    echo "Groups" >> $surface_file
+    echo "======" >> $surface_file
+    awk -F: '{print $1}' /etc/group >> $surface_file
+}
+
 ARGS=$(getopt -o "h" -l "help,hostname:" -n "$0" -- "$@")
 
 if [ $? != 0 ] ; then
@@ -117,6 +145,9 @@ if [[ $1 == "scan" ]]; then
     runcmd nmap -A -oA nmap-${date} $subnet --exclude $my_ip
     nmap_files=($(ls -t *.nmap))
     msg "Scan finished: " $(tail -n 1 ${nmap_files[0]})
+elif [[ $1 == "node" ]]; then
+# this is a compute node, perform basic analysis
+    surface_scan $2
 else
 # we should be on controller node
 
@@ -127,15 +158,8 @@ else
     surface_ip=$4
     subnet=$5
 
-    # first run ps/netstat on controller
-    if [[ ! -e surface-controller-before.log ]]; then
-        ps aux > surface-controller-before.log
-        netstat -putan >> surface-controller-before.log
-    else
-        date=$(date +%s)
-        ps aux > surface-controller-${date}.log
-        netstat -putan >> surface-controller-${date}.log
-    fi
+    # basic surface scan on controller
+    surface_scan "controller"
 
     # then connect to surface host and run nmap
     user=ubuntu
