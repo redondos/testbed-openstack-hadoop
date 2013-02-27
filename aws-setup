@@ -356,7 +356,10 @@ def main():
         wait_instance(c, controller.id)
 
         f.write("controller.id={}\n".format(controller.id))
-        f.write("controller.private_ip={}\n".format(controller.private_ip_address))
+        private_ip = controller.private_ip_address
+        if not private_ip:
+            awserror("find controller's private IP address")
+        f.write("controller.private_ip={}\n".format(private_ip))
 
         # Disable source/destination checking so that controller can be
         # used as NAT router (due to scarcity of Elastic IPs)
@@ -378,7 +381,10 @@ def main():
             info("Created compute{} instance: {}".format(node, compute.id))
             wait_instance(c, compute.id)
             f.write("compute{}.id={}\n".format(node, compute.id))
-            f.write("compute{}.private_ip={} \n".format(node, compute.private_ip_address))
+            private_ip = compute.private_ip_address
+            if not private_ip:
+                awserror("find compute" + str(node) + "'s private IP address")
+            f.write("compute{}.private_ip={} \n".format(node, private_ip))
 
             # Create name tags for nodes
             tags["Name"] = testbed_name + "-compute" + str(node)
