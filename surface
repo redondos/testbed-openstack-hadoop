@@ -189,7 +189,7 @@ else
         cmdline+=" --hostname $surface_hostname"
     fi
     ssh $ssh_opts $ssh_dst "$cmdline"
-    scp $ssh_opts ${ssh_dst}:"*nmap *xml" .
+    scp $ssh_opts ${ssh_dst}:"*nmap *xml *.surface" .
 
 fi
 

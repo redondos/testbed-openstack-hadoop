@@ -67,6 +67,8 @@ help() {
     echo "                      Controller IP address"
     echo "-t HOSTNAME, --controller_hostname HOSTNAME"
     echo "                      Controller hostname"
+    echo "--cinder"
+    echo "                      Install OpenStack Cinder"
     echo "-v, --verbose"
     echo "                      Show verbose progress"
     echo ""
@@ -87,7 +89,7 @@ help() {
     exec 1>&5
 }
 
-ARGS=$(getopt -o "hf:i:h:c:vn" -l "help,file:,ip:,hostname:,controller_ip:,controller_hostname:,key:,verbose,node" -n "$0" -- "$@")
+ARGS=$(getopt -o "hf:i:h:c:vn" -l "help,file:,ip:,hostname:,controller_ip:,controller_hostname:,key:,verbose,node,cinder" -n "$0" -- "$@")
 
 if [ $? != 0 ] ; then
     msg error "error parsing command-line options"
@@ -125,6 +127,9 @@ while true; do
             shift 2;;
         --surface)
             surface=1
+            shift;;
+        --cinder)
+            cinder=1
             shift;;
         -v|--verbose)
             verbose="-v"
@@ -194,7 +199,12 @@ configure_controller() {
     ssh $ssh_opts $ssh_dst "$cmdline $cmdline2" || true
 
     # configure openstack
-    ssh $ssh_opts $ssh_dst "sudo bash puppet-openstack-configure $verbose -h $controller_hostname -e $elastic_ip $controller_hostname $controller_ip" || return 1
+    cmdline="sudo bash puppet-openstack-configure $verbose -h $controller_hostname -e $elastic_ip $controller_hostname $controller_ip"
+    if [[ -n $cinder ]]; then
+        cmdline+=" --cinder"
+    fi
+    ssh $ssh_opts $ssh_dst "$cmdline" || return 1
+    echo "finished"
 
     # run surface scan again after configuration
     ssh $ssh_opts $ssh_dst "$cmdline $cmdline2" || true
@@ -209,7 +219,7 @@ configure_controller() {
 
     # copy surface results to user system
     mkdir -p ${testbed}/surface
-    scp $ssh_opts $ssh_dst:"*nmap* *xml *surface" ${testbed}/surface || true
+    scp $ssh_opts $ssh_dst:"*nmap* *xml *.surface" ${testbed}/surface || true
 }
 
 configure_node() {
@@ -230,7 +240,7 @@ configure_node() {
 
     # copy results back to controller
     scp $ssh_opts $ssh_dst:$node_hostname.log . 2>/dev/null || true
-    scp $ssh_opts $ssh_dst:"*nmap* *xml *surface" . 2>/dev/null || true
+    scp $ssh_opts $ssh_dst:"*nmap* *xml *.surface" . 2>/dev/null || true
 }
 
 # global variables
