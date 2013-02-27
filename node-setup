@@ -123,6 +123,9 @@ while true; do
         -k|--key)
             ssh_key=$2
             shift 2;;
+        --surface)
+            surface=1
+            shift;;
         -v|--verbose)
             verbose="-v"
             verbose_sh="-x"
@@ -175,38 +178,59 @@ configure_controller() {
         sleep 1
     done
 
+    # copy scripts to controller
     scp $ssh_opts "${files[@]}" $ssh_dst: 2>/dev/null
+
+    # configure controller as nat router
     ssh $ssh_opts $ssh_dst "sudo bash network-setup server $controller_hostname" &>/dev/null
+
+    # run surface scan before configuration
+    ## if surface_ip is set, `surface' will use nmap to scan the subnet
+    ## otherwise a simple analysis will be performed
+    cmdline="sudo bash $verbose_sh surface $testbed $ssh_key $controller_ip $surface_ip $subnet"
+    if [[ -n $surface_hostname ]]; then
+        cmdline2="--hostname $surface_hostname"
+    fi
+    ssh $ssh_opts $ssh_dst "$cmdline $cmdline2" || true
+
+    # configure openstack
     ssh $ssh_opts $ssh_dst "sudo bash puppet-openstack-configure $verbose -h $controller_hostname -e $elastic_ip $controller_hostname $controller_ip" || return 1
+
+    # run surface scan again after configuration
+    ssh $ssh_opts $ssh_dst "$cmdline $cmdline2" || true
+
+    # copy all logs back to user system
     mkdir -p ${testbed}/logs
     scp $ssh_opts $ssh_dst:$controller_hostname.log ${testbed}/logs || true
+
+    # copy and replace public ip in openrc so we can communicate with openstack services
     scp $ssh_opts $ssh_dst:/root/openrc ${testbed} 2>/dev/null || true
-    # replace public ip in openrc so we can communicate with openstack services
     sed -i "s/${controller_hostname}/${elastic_ip}/g" $testbed/openrc 2>/dev/null || true
+
+    # copy surface results to user system
+    mkdir -p ${testbed}/surface
+    scp $ssh_opts $ssh_dst:"*nmap* *xml *surface" ${testbed}/surface || true
 }
 
 configure_node() {
+    # copy scripts to node
     scp $ssh_opts "${files[@]}" $ssh_dst: 2>/dev/null
-    ssh $ssh_opts $ssh_dst "sudo bash network-setup client $node_hostname $controller_ip" 2>/dev/null
-    ssh $ssh_opts $ssh_dst "sudo bash puppet-openstack-configure $verbose -h $node_hostname $controller_hostname $controller_ip" || return 1
+
+    # modify default route to connect to the internet via controller
+    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh network-setup client $node_hostname $controller_ip" 2>/dev/null
+
+    # run attack surface analysis before configuration
+    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh surface node $node_hostname" 2>/dev/null
+
+    # configure openstack
+    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh puppet-openstack-configure $verbose -h $node_hostname $controller_hostname $controller_ip" || return 1
+
+    # run attack surface analysis after configuration
+    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh surface node $node_hostname" 2>/dev/null
+
+    # copy results back to controller
     scp $ssh_opts $ssh_dst:$node_hostname.log . 2>/dev/null || true
-}
-
-surface_node() {
-    scp $ssh_opts "${files[@]}" $ssh_dst: 2>/dev/null
-    ssh $ssh_opts $ssh_dst "sudo bash network-setup client $node_hostname $controller_ip" 2>/dev/null
-    ssh $ssh_opts $ssh_dst "sudo bash surface ${node_hostname%%.*}"
-    scp $ssh_opts $ssh_dst:*.log . 2>/dev/null || true
-}
-
-surface_controller() {
-    scp $ssh_opts "${files[@]}" $ssh_dst: 2>/dev/null
-    # set controller hostname if it isn't configured yet
-    # surface node hostname will be set from surface script
-    ssh $ssh_opts $ssh_dst "sudo bash network-setup server $controller_hostname" 2>/dev/null
-    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh surface $testbed $ssh_key $controller_ip $surface_ip $subnet --hostname $surface_hostname"
-    mkdir -p ${testbed}/surface
-    scp $ssh_opts $ssh_dst:"*nmap* *xml" ${testbed}/surface || true
+    scp $ssh_opts $ssh_dst:"*nmap* *xml *surface" . 2>/dev/null || true
 }
 
 # global variables
@@ -249,19 +273,12 @@ if [[ -z $node ]]; then
     done
     [[ -f $ssh_key_file ]] || msg error "Could not find SSH key: $ssh_key"
 
-    msg "Connecting to $elastic_ip"
-    msg "Setting up node: $controller_hostname ($controller_ip)"
+    msg warn "Connecting to $elastic_ip"
+    msg warn "Setting up node: $controller_hostname ($controller_ip)"
 
     ssh_opts+=" -i $ssh_key_file"
     files+=($ssh_key_file)
     ssh_dst="$user@$elastic_ip"
-
-    # run surface analysis before setting up openstack
-    { if [[ -n $surface_ip ]]; then
-        msg warn "Running attack surface analysis"
-        surface_controller
-    fi
-    }
 
     # Configure controller by connecting via ssh and running
     # puppet-openstack-configure
@@ -300,13 +317,7 @@ if [[ -z $node ]]; then
         i+=1
     done
 
-    # run surface analysis after setting up openstack
-    { if [[ -n $surface_ip ]]; then
-        msg warn "Running attack surface analysis"
-        surface_controller
-    fi
-    }
-
+    # finished setting up, check if horizon is available
     if curl -s "http://${elastic_ip}/horizon" | grep -q Dashboard; then
         scp $ssh_opts $testbed/openrc $ssh_dst:
         ssh $ssh_opts $ssh_dst 'source openrc; glance image-create --name "cirros-0.3.1-i386" --container-format bare --copy-from http://download.cirros-cloud.net/0.3.1/cirros-0.3.1-i386-disk.img --is-public true' &>/dev/null
