@@ -56,6 +56,7 @@ def create_aws_testbed(testbed, options):
 def configure_testbed(testbed, options):
     cmdline = ["/usr/bin/env", "bash", "node-setup", testbed]
     if options.verbose: cmdline.append("-v")
+    if options.cinder: cmdline.append("--cinder")
     return subprocess.call(cmdline)
 
 def parse_desc(testbed):
@@ -120,6 +121,9 @@ def main():
 
     parser.add_option("--surface", action="store_true", dest="surface", default=False,
                         help="create an attack surface node              ")
+
+    parser.add_option("--cinder", action="store_true", dest="cinder", default=False,
+                        help="install openstack cinder instead of nova-volume    ")
 
     (options, args) = parser.parse_args()
 

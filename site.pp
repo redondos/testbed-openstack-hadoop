@@ -103,7 +103,8 @@ node /controller/ {
     rabbit_password         => $rabbit_password,
     rabbit_user             => $rabbit_user,
     # export_resources        => false,
-    secret_key              => secret
+    secret_key              => secret,
+    cinder                  => false
   }
 
   class { 'openstack::auth_file':
