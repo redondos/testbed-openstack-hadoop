@@ -77,10 +77,10 @@ help() {
 surface_scan() {
 # args:
 # node name: used to name the surface scan files
-    if [[ ! -e surface-$1-before.log ]]; then
-        surface_file=surface-$1-before.log
+    if [[ ! -e $1-before.surface ]]; then
+        surface_file=$1-before.surface
     else
-        surface_file=surface-$1-$(date +%s)
+        surface_file=$1-$(date +%s).surface
     fi
 
     touch $surface_file
@@ -143,14 +143,23 @@ if [[ $1 == "scan" ]]; then
     subnet=$2
     date=$(date +%s)
     logfile=surface-${date}.log
+
     if [[ -n $surface_hostname ]]; then
         sethostname $surface_hostname
     fi
+
+    if [[ ! -e nmap-before.xml ]]; then
+        suffix="before"
+    else
+        suffix=$(date +%s)
+    fi
+
     installpkg nmap
-    msg "nmap: scanning subnet $subnet from $my_ip"
-    runcmd nmap -A -oA nmap-${date} $subnet --exclude $my_ip
+    msg warn "nmap: Scanning subnet $subnet from $my_ip"
+    runcmd nmap -A -oA nmap-$suffix $subnet --exclude $my_ip
     nmap_files=($(ls -t *.nmap))
     msg "Scan finished: " $(tail -n 1 ${nmap_files[0]})
+    msg warn "Full results saved in nmap-${suffix}.{gnmap,nmap,xml}"
 elif [[ $1 == "node" ]]; then
 # this is a compute node, perform basic analysis
     surface_scan $2
@@ -165,14 +174,14 @@ else
     subnet=$5
 
     # basic surface scan on controller
-    surface_scan "controller"
+    surface_scan $hostname
 
     # then connect to surface host and run nmap
     user=ubuntu
     ssh_opts=" -qo UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
     ssh_opts+=" -i $ssh_key.pem"
     ssh_dst=$user@$surface_ip
-    msg "Connecting to attack surface node ($surface_ip)"
+    msg warn "Connecting to attack surface node ($surface_ip)"
     scp $ssh_opts surface network-setup $ssh_dst:
     ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh network-setup client ${testbed}-surface.ec2.internal $controller_ip" 2>/dev/null
     cmdline="sudo bash $verbose_sh surface scan $surface_ip $subnet"
@@ -180,7 +189,7 @@ else
         cmdline+=" --hostname $surface_hostname"
     fi
     ssh $ssh_opts $ssh_dst "$cmdline"
-    scp $ssh_opts ${ssh_dst}:"*nmap* *xml" . 2>/dev/null
+    scp $ssh_opts ${ssh_dst}:"*nmap *xml" .
 
 fi
 

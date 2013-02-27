@@ -290,6 +290,7 @@ def main():
                 None
             subprocess.call(["scp"] + ssh_opts + [host + ":*nmap*", surfacedir])
             subprocess.call(["scp"] + ssh_opts + [host + ":*xml", surfacedir])
+            subprocess.call(["scp"] + ssh_opts + [host + ":*surface", surfacedir])
     else:
         parser.print_usage()
         error("Unknown command: " + command)
