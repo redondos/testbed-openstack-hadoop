@@ -264,11 +264,11 @@ if [[ $hostname == $controller_hostname ]]; then
 fi
 
 # run puppet to install openstack after removing stale lock (in case Puppet was interrupted)
-if ps aux | grep -q puppet.agent; then
+if pgrep -f puppet.agent &>/dev/null; then
     msg warn "Puppet agent running"
 else
     msg warn "Removing stale lock"
-    sudo rm /var/lib/puppet/state/agent_catalog_run.lock
+    sudo rm /var/lib/puppet/state/agent_catalog_run.lock 2>/dev/null
 fi
 msg "Installing and configuring: OpenStack"
 runcmd puppet agent -t
