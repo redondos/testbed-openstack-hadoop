@@ -204,7 +204,6 @@ configure_controller() {
         cmdline+=" --cinder"
     fi
     ssh $ssh_opts $ssh_dst "$cmdline" || return 1
-    echo "finished"
 
     # run surface scan again after configuration
     ssh $ssh_opts $ssh_dst "$cmdline $cmdline2" || true
