@@ -104,16 +104,20 @@ def attach_ip(connection, instance_id, ip, wait):
     while not attached:
         try:
             attached = connection.associate_address(instance_id, None, ip.allocation_id)
+            sys.stdout.write('\n')
+            sys.stdout.flush()
         except:
             sys.stdout.write('.')
             sys.stdout.flush()
             time.sleep(2)
             wait -= 2
+            if wait == 10:
+                if not attach_ip(connection, instance_id, find_elastic_ip(connection), wait):
+                    sys.stdout.write('\n')
+                    warn(traceback.format_exc().split('\n')[-2])
+                    return False
             if wait == 0:
-                warn(traceback.format_exc().split('\n')[-2])
                 break
-    sys.stdout.write('\n')
-    sys.stdout.flush()
     return attached
 
 def wait_instance(connection, instance):
@@ -148,6 +152,9 @@ def main():
                         help="number of instances to spawn.                 "
                         "       if set to 1, a single node setup will be used."
                         "       default: 2")
+
+    parser.add_option("--surface", action="store_true", dest="surface", default=False,
+                        help="create an attack surface node              ")
 
     parser.add_option("-y", "--yes", action="store_true", dest="yes", default=False,
                         help="answer yes to all questions              ")
@@ -349,7 +356,10 @@ def main():
         wait_instance(c, controller.id)
 
         f.write("controller.id={}\n".format(controller.id))
-        f.write("controller.private_ip={}\n".format(controller.private_ip_address))
+        private_ip = controller.private_ip_address
+        if not private_ip:
+            awserror("find controller's private IP address")
+        f.write("controller.private_ip={}\n".format(private_ip))
 
         # Disable source/destination checking so that controller can be
         # used as NAT router (due to scarcity of Elastic IPs)
@@ -371,15 +381,34 @@ def main():
             info("Created compute{} instance: {}".format(node, compute.id))
             wait_instance(c, compute.id)
             f.write("compute{}.id={}\n".format(node, compute.id))
-            f.write("compute{}.private_ip={} \n".format(node, compute.private_ip_address))
+            private_ip = compute.private_ip_address
+            if not private_ip:
+                awserror("find compute" + str(node) + "'s private IP address")
+            f.write("compute{}.private_ip={} \n".format(node, private_ip))
 
             # Create name tags for nodes
             tags["Name"] = testbed_name + "-compute" + str(node)
             c.create_tags([compute.id], tags)
 
+        # create surface node
+        if options.surface:
+            try:
+                node += 1
+                ec2[node] = c.run_instances('ami-3d4ff254', subnet_id=subnet.id, key_name=options.ssh_key, instance_type="t1.micro")
+            except:
+                print traceback.format_exc().split('\n')[-2]
+                error("Could not create attack surface instance.")
+            surface = ec2[node].instances[0]
+            wait_instance(c, surface.id)
+            info("Created attack surface instance: {}".format(surface.id))
+            f.write("surface.id={}\n".format(surface.id))
+            f.write("surface.private_ip={}\n".format(surface.private_ip_address))
+            tags["Name"] = testbed_name + "-surface"
+            c.create_tags([surface.id], tags)
+
         # Attach elastic ip to controller
         warn("Waiting for controller to spawn to attach IP")
-        if not attach_ip(c, ec2[0].instances[0].id, ip, 30):
+        if not attach_ip(c, ec2[0].instances[0].id, ip, 120):
             error("Timeout reached while trying to attach Elastic IP. Aborting.")
         info("Attached Elastic IP")
         f.write("elastic_ip={}\n".format(ip.public_ip))

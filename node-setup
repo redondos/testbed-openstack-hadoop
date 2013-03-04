@@ -67,6 +67,8 @@ help() {
     echo "                      Controller IP address"
     echo "-t HOSTNAME, --controller_hostname HOSTNAME"
     echo "                      Controller hostname"
+    echo "--cinder"
+    echo "                      Install OpenStack Cinder"
     echo "-v, --verbose"
     echo "                      Show verbose progress"
     echo ""
@@ -87,7 +89,7 @@ help() {
     exec 1>&5
 }
 
-ARGS=$(getopt -o "hf:i:h:c:vn" -l "help,file:,ip:,hostname:,controller_ip:,controller_hostname:,key:,verbose,node" -n "$0" -- "$@")
+ARGS=$(getopt -o "hf:i:h:c:vn" -l "help,file:,ip:,surface,hostname:,controller_ip:,controller_hostname:,key:,verbose,node,cinder" -n "$0" -- "$@")
 
 if [ $? != 0 ] ; then
     msg error "error parsing command-line options"
@@ -123,8 +125,15 @@ while true; do
         -k|--key)
             ssh_key=$2
             shift 2;;
+        --surface)
+            surface=1
+            shift;;
+        --cinder)
+            cinder=1
+            shift;;
         -v|--verbose)
             verbose="-v"
+            verbose_sh="-x"
             set -x
             shift;;
         --)
@@ -141,16 +150,26 @@ parsedesc() {
     while IFS="=" read key value; do
         case $key in
             ssh_key)
-                ssh_key=$value;;
+                ssh_key=$value
+                ;;
             *elastic_ip)
-                elastic_ip=$value;;
+                elastic_ip=$value
+                ;;
             controller.private_ip)
                 controller_hostname=$testbed-${key%%.*}.ec2.internal
                 controller_ip=$value
                 ;;
             compute*.private_ip)
                 hosts+=($testbed-${key%%.*}.ec2.internal)
-                ips+=($value);;
+                ips+=($value)
+                ;;
+            surface*.private_ip)
+                surface_hostname=$testbed-${key%%.*}.ec2.internal
+                surface_ip=$value
+                ;;
+            subnet.cidr_block)
+                subnet=$value
+                ;;
         esac
     done < $1
 }
@@ -164,26 +183,71 @@ configure_controller() {
         sleep 1
     done
 
-    scp $ssh_opts "${files[@]}" $ssh_dst: &>/dev/null
-    ssh $ssh_opts $ssh_dst "sudo bash network-setup server $controller_hostname 2>/dev/null"
-    ssh $ssh_opts $ssh_dst "sudo bash puppet-openstack-configure $verbose -h $controller_hostname -e $elastic_ip $controller_hostname $controller_ip" || return 1
-    scp $ssh_opts $ssh_dst:$controller_hostname.log $testbed || true
-    scp $ssh_opts $ssh_dst:/root/openrc $testbed 2>/dev/null || true
+    # copy scripts to controller
+    scp $ssh_opts "${files[@]}" $ssh_dst: 2>/dev/null
+
+    # configure controller as nat router
+    ssh $ssh_opts $ssh_dst "sudo bash network-setup server $controller_hostname" &>/dev/null
+
+    # run surface scan before configuration
+    ## if surface_ip is set, `surface' will use nmap to scan the subnet
+    ## otherwise a simple analysis will be performed
+    cmdline="sudo bash $verbose_sh surface $testbed $ssh_key $controller_ip $subnet $surface_ip"
+    if [[ -n $surface_hostname ]]; then
+        cmdline2="--hostname $surface_hostname"
+    fi
+    ssh $ssh_opts $ssh_dst "$cmdline $cmdline2" || true
+
+    # configure openstack
+    cmdline="sudo bash puppet-openstack-configure $verbose -h $controller_hostname -e $elastic_ip $controller_hostname $controller_ip"
+    if [[ -n $cinder ]]; then
+        cmdline+=" --cinder"
+    fi
+    ssh $ssh_opts $ssh_dst "$cmdline" || return 1
+    echo "finished"
+
+    # run surface scan again after configuration
+    ssh $ssh_opts $ssh_dst "$cmdline $cmdline2" || true
+
+    # copy all logs back to user system
+    mkdir -p ${testbed}/logs
+    scp $ssh_opts $ssh_dst:$controller_hostname.log ${testbed}/logs || true
+
+    # copy and replace public ip in openrc so we can communicate with openstack services
+    scp $ssh_opts $ssh_dst:/root/openrc ${testbed} 2>/dev/null || true
     sed -i "s/${controller_hostname}/${elastic_ip}/g" $testbed/openrc 2>/dev/null || true
+
+    # copy surface results to user system
+    mkdir -p ${testbed}/surface
+    scp $ssh_opts $ssh_dst:"*nmap* *xml *.surface" ${testbed}/surface || true
 }
 
 configure_node() {
-    scp $ssh_opts "${files[@]}" $ssh_dst: &>/dev/null
-    ssh $ssh_opts $ssh_dst "sudo bash network-setup client $node_hostname $controller_ip" 2>/dev/null
-    ssh $ssh_opts $ssh_dst "sudo bash puppet-openstack-configure $verbose -h $node_hostname $controller_hostname $controller_ip" || return 1
-    scp $ssh_opts $ssh_dst:$node_hostname.log . || true
+    # copy scripts to node
+    scp $ssh_opts "${files[@]}" $ssh_dst: 2>/dev/null
+
+    # modify default route to connect to the internet via controller
+    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh network-setup client $node_hostname $controller_ip" 2>/dev/null
+
+    # run attack surface analysis before configuration
+    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh surface node $node_hostname" 2>/dev/null
+
+    # configure openstack
+    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh puppet-openstack-configure $verbose -h $node_hostname $controller_hostname $controller_ip" || return 1
+
+    # run attack surface analysis after configuration
+    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh surface node $node_hostname" 2>/dev/null
+
+    # copy results back to controller
+    scp $ssh_opts $ssh_dst:$node_hostname.log . 2>/dev/null || true
+    scp $ssh_opts $ssh_dst:"*nmap* *xml *.surface" . 2>/dev/null || true
 }
 
 # global variables
 hostname=$(hostname)
 user=ubuntu
-files=(puppet-openstack-configure site.pp node-setup network-setup)
-ssh_opts="$verbose -qo UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+files=(puppet-openstack-configure site.pp node-setup network-setup surface)
+ssh_opts=" -qo UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
 declare -a pids
 
 # if testbed file wasn't specified in the command-line,
@@ -219,8 +283,8 @@ if [[ -z $node ]]; then
     done
     [[ -f $ssh_key_file ]] || msg error "Could not find SSH key: $ssh_key"
 
-    msg "Connecting to $elastic_ip"
-    msg "Setting up node: $controller_hostname ($controller_ip)"
+    msg warn "Connecting to $elastic_ip"
+    msg warn "Setting up node: $controller_hostname ($controller_ip)"
 
     ssh_opts+=" -i $ssh_key_file"
     files+=($ssh_key_file)
@@ -248,20 +312,23 @@ if [[ -z $node ]]; then
     for node_hostname in ${hosts[@]}; do
         node_ip=${ips[$i]}
         msg "Setting up node: $node_hostname ($node_ip)"
-        ssh $ssh_opts $ssh_dst "sudo bash node-setup $verbose --node --ip $node_ip --hostname $node_hostname --controller_ip $controller_ip --controller_hostname $controller_hostname --key $ssh_key $testbed" &
+        ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh node-setup --node --ip $node_ip --hostname $node_hostname --controller_ip $controller_ip --controller_hostname $controller_hostname --key $ssh_key $testbed" &
         pids+=($!)
         i+=1
     done
 
     wait
 
+    # finished setting up, check if horizon is available
     if curl -s "http://${elastic_ip}/horizon" | grep -q Dashboard; then
         scp $ssh_opts $testbed/openrc $ssh_dst:
         ssh $ssh_opts $ssh_dst 'source openrc; glance image-create --name "cirros-0.3.1-i386" --container-format bare --copy-from http://download.cirros-cloud.net/0.3.1/cirros-0.3.1-i386-disk.img --is-public true' &>/dev/null
         msg "Setup complete. Dashboard: http://${elastic_ip}/horizon"
     fi
 
-    scp $ssh_opts $ssh_dst:$testbed-compute*.log $testbed
+    mkdir -p ${testbed}/{logs,surface}
+    scp $ssh_opts $ssh_dst:$testbed-compute*.log ${testbed}/logs 2>/dev/null
+    scp $ssh_opts $ssh_dst:surface*.log ${testbed}/surface 2>/dev/null || true
 
 # configuring node (called recursively from this script)
 else
@@ -278,7 +345,7 @@ else
     else
         msg error "Error configuring $node_hostname";
     fi
-    scp $ssh_opts $ssh_dst:$node_hostname.log $testbed
+    scp $ssh_opts $ssh_dst:$node_hostname.log . 2>/dev/null
     } &
     pids+=($!)
     wait

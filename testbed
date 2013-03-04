@@ -49,13 +49,14 @@ def awserror(reason, exit=10):
 def create_aws_testbed(testbed, options):
     cmdline = ["/usr/bin/env", "python", "aws-setup", testbed]
     cmdline += ["-k", options.ssh_key, "-s", options.subnet, "-n", str(options.instances), "-f", options.flavor]
-    if options.verbose: cmdline.append("-v")
+    if options.surface: cmdline += ["--surface"]
     cmdline.append("-y")
     return subprocess.call(cmdline)
 
 def configure_testbed(testbed, options):
     cmdline = ["/usr/bin/env", "bash", "node-setup", testbed]
     if options.verbose: cmdline.append("-v")
+    if options.cinder: cmdline.append("--cinder")
     return subprocess.call(cmdline)
 
 def parse_desc(testbed):
@@ -71,11 +72,26 @@ def parse_desc(testbed):
         if not line: break
         key, value = line.strip().split("=")
         T[key] = value
-        if key.startswith("controller") or key.startswith("compute"):
+        if key.startswith("controller") or key.startswith("compute") or key.startswith("surface"):
             if key.endswith(".id"):
                 instances.append(value)
     f.close()
     return T, instances
+
+def wait_instance(connection, instance):
+    i = 0
+    while True:
+        i += 1
+        time.sleep(1)
+        try:
+            if connection.get_all_instances([instance]):
+                break
+        except:
+            if i >= 10:
+                error("Error creating instance ({}). Check AWS control panel.".format(instance))
+
+def keys_with_value(D, value):
+ return [k for k, v in D.iteritems() if value in v]
 
 def main():
     parser = OptionParser(usage="usage: %prog [options] start|stop|status|destroy|list|describe|create|configure|ssh testbed")
@@ -102,6 +118,12 @@ def main():
                         help="number of instances to spawn.                 "
                         "       if set to 1, a single node setup will be used."
                         "       default: 2")
+
+    parser.add_option("--surface", action="store_true", dest="surface", default=False,
+                        help="create an attack surface node              ")
+
+    parser.add_option("--cinder", action="store_true", dest="cinder", default=False,
+                        help="install openstack cinder instead of nova-volume    ")
 
     (options, args) = parser.parse_args()
 
@@ -180,11 +202,14 @@ def main():
     elif command == "status":
         j = 0
         for testbed_instance in instances:
-            if j == 0:
+            key = "".join(keys_with_value(T, testbed_instance))
+            if key.startswith("controller"):
                 out = testbed + "-controller:\t"
+            elif key.startswith("surface"):
+                out = testbed + "-surface:   \t"
             else:
+                j += 1
                 out = testbed + "-compute" + str(j) + ":  \t"
-            j += 1
             try:
                 reservation = c.get_all_instances(testbed_instance)
                 out += reservation[0].instances[0].state
@@ -228,6 +253,49 @@ def main():
     elif command == "configure":
         configure_testbed(testbed, options)
 
+    elif command == "surface":
+        if not "surface.id" in T:
+            answer = raw_input("Surface node not found. Create (Y/n) ")
+            if answer.lower() == "n" or answer.lower() == "no":
+                warn("Aborting...")
+                sys.exit(0)
+
+            try:
+                surface_reservation = c.run_instances('ami-3d4ff254', subnet_id=T["subnet.id"], key_name=T["ssh_key"], instance_type="t1.micro")
+            except:
+                print traceback.format_exc().split('\n')[-2]
+                error("Could not create attack surface instance")
+
+            surface = surface_reservation.instances[0]
+            wait_instance(c, surface.id)
+            info("Created attack surface instance: " +  surface.id)
+
+            tags = {}
+            tags["Name"] = testbed + "-surface"
+            c.create_tags([surface.id], tags)
+
+            f = open(testbed + "/" + testbed + ".desc", "a")
+            f.write("surface.id=" + surface.id + "\n")
+            f.write("surface.private_ip=" + surface.private_ip_address + "\n")
+            f.close()
+
+        T = {}
+        T, instances = parse_desc(testbed)
+
+        if "surface.id" in T:
+            keyfile = testbed + "/" + T["ssh_key"] + ".pem"
+            ssh_opts = ["-o", "UserKnownHostsFile=/dev/null", "-o", "StrictHostKeyChecking=no", "-i", keyfile]
+            host = "ubuntu@" + T["elastic_ip"]
+            subprocess.call(["ssh"] + ssh_opts + [host, "/home/ubuntu/surface", testbed, T["ssh_key"], T["controller.private_ip"], T["subnet.cidr_block"], T["surface.private_ip"]])
+            subprocess.call(["ssh"] + ssh_opts + [host, "hostname"])
+            surfacedir = testbed + "/surface"
+            try:
+                subprocess.os("mkdir " + surfacedir)
+            except:
+                None
+            subprocess.call(["scp"] + ssh_opts + [host + ":*nmap*", surfacedir])
+            subprocess.call(["scp"] + ssh_opts + [host + ":*xml", surfacedir])
+            subprocess.call(["scp"] + ssh_opts + [host + ":*surface", surfacedir])
     else:
         parser.print_usage()
         error("Unknown command: " + command)

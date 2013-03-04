@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+#
+# 2013 Angelo Olivera <aolivera@gmail.com>
+#
+
+# Color escape codes
+RESTORE='\033[0m'
+RED='\033[00;31m'
+GREEN='\033[00;32m'
+YELLOW='\033[00;33m'
+
+msg() {
+    case "$1" in
+        error)  echo -ne "$RED"     >&2
+                echo "$0@$hostname: ${@:2}"    >&2
+                exit 1
+                ;;
+        warn)   echo -ne "$YELLOW"  >&2
+                echo "$0@$hostname: ${@:2}"    >&2
+                ;;
+        *)      echo -ne "$GREEN"
+                echo "$0@$hostname: ${@}"
+    esac
+
+    # restore normal colors
+    echo -ne "$restore"
+    echo -ne "$restore" >&2
+}
+
+sethostname() {
+    hostname="$1"
+    [[ $(hostname) == $hostname ]] && return 0
+    msg "Setting hostname: $hostname"
+    hostname $hostname
+    echo $(hostname) > /etc/hostname
+    grep -q $hostname /etc/hosts && return 0
+    if grep -q 127.0.0.1 /etc/hosts; then
+        sed -ie "s/127.0.0.1.*/& $hostname/" /etc/hosts
+    else
+        echo "127.0.0.1 localhost $hostname" >> /etc/hosts
+    fi
+}
+
+installpkg() {
+    if ! dpkg -s $1 &>/dev/null; then
+        msg "Installing: $1"
+        runcmd aptitude -y install $@
+    fi
+}
+
+runcmd() {
+    if [[ -n $verbose ]]; then
+        "$@" | tee -a $logfile
+    else
+        "$@" &>> $logfile
+    fi
+}
+
+usage() {
+    true
+}
+
+help() {
+    # print to stderr
+    exec 5>&1
+    exec 1>&2
+    echo "Usage: $0 [options]"
+    echo ""
+    echo "Commands:"
+    echo "scan: scan specified subnet"
+    echo "Options:"
+    echo "-h"
+    # restore stdout
+    exec 1>&5
+}
+
+surface_scan() {
+# args:
+# node name: used to name the surface scan files
+    if [[ ! -e $1-before.surface ]]; then
+        surface_file=$1-before.surface
+    else
+        surface_file=$1-$(date +%s).surface
+    fi
+
+    touch $surface_file
+
+    echo "Process information" >> $surface_file
+    echo "===================" >> $surface_file
+    ps aux >> $surface_file
+
+    echo "Open ports" >> $surface_file
+    echo "==========" >> $surface_file
+    netstat -putan >> $surface_file
+
+    echo "Users" >> $surface_file
+    echo "=====" >> $surface_file
+    awk -F: '{print $1}' /etc/passwd >> $surface_file
+
+    echo "Groups" >> $surface_file
+    echo "======" >> $surface_file
+    awk -F: '{print $1}' /etc/group >> $surface_file
+}
+
+ARGS=$(getopt -o "h" -l "help,hostname:" -n "$0" -- "$@")
+
+if [ $? != 0 ] ; then
+    msg error "error parsing command-line options"
+    exit 1
+fi
+
+eval set -- "$ARGS"
+
+while true; do
+    case "$1" in
+        -h|--help)
+            help
+            exit 0
+            shift;;
+        --hostname)
+            surface_hostname=$2
+            shift 2
+            ;;
+        -v|--verbose)
+            verbose=1
+            verbose_sh="-x"
+            set -x
+            shift
+            ;;
+        --)
+            shift
+            break;;
+        *)
+            msg error "invalid command-line option: $1"
+            break;;
+    esac
+done
+
+if [[ $1 == "scan" ]]; then
+# we should be on surface host, start analysis
+    shift
+    my_ip=$1
+    subnet=$2
+    date=$(date +%s)
+    logfile=surface-${date}.log
+
+    if [[ -n $surface_hostname ]]; then
+        sethostname $surface_hostname
+    fi
+
+    if [[ ! -e nmap-before.xml ]]; then
+        suffix="before"
+    else
+        suffix=$(date +%s)
+    fi
+
+    installpkg nmap
+    msg warn "nmap: Scanning subnet $subnet from $my_ip"
+    runcmd nmap -A -oA nmap-$suffix $subnet --exclude $my_ip
+    nmap_files=($(ls -t *.nmap))
+    msg "Scan finished: " $(tail -n 1 ${nmap_files[0]})
+    msg warn "Full results saved in nmap-${suffix}.{gnmap,nmap,xml}"
+elif [[ $1 == "node" ]]; then
+# this is a compute node, perform basic analysis
+    surface_scan $2
+else
+# we should be on controller node
+
+    hostname=$(hostname)
+    testbed=$1
+    ssh_key=$2
+    controller_ip=$3
+    subnet=$4
+    surface_ip=$5
+
+    # basic surface scan on controller
+    surface_scan $hostname
+
+    if [[ -n $surface_ip ]]; then
+        # then connect to surface host and run nmap
+        user=ubuntu
+        ssh_opts=" -qo UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+        ssh_opts+=" -i $ssh_key.pem"
+        ssh_dst=$user@$surface_ip
+        msg warn "Connecting to attack surface node ($surface_ip)"
+        scp $ssh_opts surface network-setup $ssh_dst:
+        ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh network-setup client ${testbed}-surface.ec2.internal $controller_ip" 2>/dev/null
+        cmdline="sudo bash $verbose_sh surface scan $surface_ip $subnet"
+        if [[ -n $surface_hostname ]]; then
+            cmdline+=" --hostname $surface_hostname"
+        fi
+        ssh $ssh_opts $ssh_dst "$cmdline"
+    fi
+
+    scp $ssh_opts ${ssh_dst}:"*nmap *xml *.surface" . 2>/dev/null
+
+fi
+

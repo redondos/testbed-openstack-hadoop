@@ -43,6 +43,8 @@ usage() {
     echo "-l LOGFILE, --logfile LOGFILE"
     echo "                      Write progress to LOGFILE"
     echo "                      default: HOSTNAME.log"
+    echo "--cinder"
+    echo "                      Install OpenStack Cinder"
     echo ""
     echo "Example:"
     echo "$0 -h vpc-compute2.ec2.local --logfile /tmp/compute2.log vpc-controller.ec2.local 10.0.0.64"
@@ -68,7 +70,7 @@ runcmd() {
 sethostname() {
     hostname="$1"
     [[ $(hostname) == $hostname ]] && return 0
-    msg "Setting hostname"
+    msg "Setting hostname: $hostname"
     hostname $hostname
     echo $(hostname) > /etc/hostname
     grep -q $hostname /etc/hosts && return 0
@@ -168,6 +170,9 @@ configure_puppetmaster() {
     if [[ -n $controller_public_ip ]]; then
         sed -ie "s/^\(\$controller_node_public.*\)\$controller_node_address/\1'${controller_public_ip}'/" /etc/puppet/manifests/site.pp
     fi
+    if ((options_cinder)); then
+        sed -i "s/cinder .*/cinder => true/" /etc/puppet/manifests/site.pp
+    fi
 
     # enable autosigning (only works for FQDNs)
     echo -e '*.local\n*.internal' > /etc/puppet/autosign.conf
@@ -179,7 +184,7 @@ if ((UID!=0)); then
 fi
 
 # parse command-line options
-ARGS=$(getopt -o "l:h:e:v" -l "logfile:,hostname:,elastic:,verbose" -n "$0" -- "$@")
+ARGS=$(getopt -o "l:h:e:v" -l "logfile:,hostname:,elastic:,verbose,cinder" -n "$0" -- "$@")
 
 if [ $? != 0 ] ; then
     msg error "error parsing command-line options"
@@ -202,6 +207,9 @@ while true; do
         -v|--verbose)
             options_verbose=1
             set -x
+            shift;;
+        --cinder)
+            options_cinder=1
             shift;;
         --)
             shift
