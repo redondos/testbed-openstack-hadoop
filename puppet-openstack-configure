@@ -263,7 +263,6 @@ ps aux | grep -q puppet.agent || sudo rm /var/lib/puppet/state/agent_catalog_run
 msg "Installing and configuring: OpenStack"
 runcmd puppet agent -t
 
-echo almost there
 # puppet agent will return 2 while parsing /etc/nova/nova.conf
 # known bug in openstack modules (https://github.com/puppetlabs/puppetlabs-nova/issues/161)
 if (($?!=0 && $?!=2)); then
@@ -275,6 +274,5 @@ if (($?!=0 && $?!=2)); then
     msg "e.g. openstack-compute1.ec2.internal"
 fi
 
-echo should exit now
 # vim: ts=4:sw=4:et
 

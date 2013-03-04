@@ -170,26 +170,29 @@ else
     testbed=$1
     ssh_key=$2
     controller_ip=$3
-    surface_ip=$4
-    subnet=$5
+    subnet=$4
+    surface_ip=$5
 
     # basic surface scan on controller
     surface_scan $hostname
 
-    # then connect to surface host and run nmap
-    user=ubuntu
-    ssh_opts=" -qo UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
-    ssh_opts+=" -i $ssh_key.pem"
-    ssh_dst=$user@$surface_ip
-    msg warn "Connecting to attack surface node ($surface_ip)"
-    scp $ssh_opts surface network-setup $ssh_dst:
-    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh network-setup client ${testbed}-surface.ec2.internal $controller_ip" 2>/dev/null
-    cmdline="sudo bash $verbose_sh surface scan $surface_ip $subnet"
-    if [[ -n $surface_hostname ]]; then
-        cmdline+=" --hostname $surface_hostname"
+    if [[ -n $surface_ip ]]; then
+        # then connect to surface host and run nmap
+        user=ubuntu
+        ssh_opts=" -qo UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+        ssh_opts+=" -i $ssh_key.pem"
+        ssh_dst=$user@$surface_ip
+        msg warn "Connecting to attack surface node ($surface_ip)"
+        scp $ssh_opts surface network-setup $ssh_dst:
+        ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh network-setup client ${testbed}-surface.ec2.internal $controller_ip" 2>/dev/null
+        cmdline="sudo bash $verbose_sh surface scan $surface_ip $subnet"
+        if [[ -n $surface_hostname ]]; then
+            cmdline+=" --hostname $surface_hostname"
+        fi
+        ssh $ssh_opts $ssh_dst "$cmdline"
     fi
-    ssh $ssh_opts $ssh_dst "$cmdline"
-    scp $ssh_opts ${ssh_dst}:"*nmap *xml *.surface" .
+
+    scp $ssh_opts ${ssh_dst}:"*nmap *xml *.surface" . 2>/dev/null
 
 fi
 

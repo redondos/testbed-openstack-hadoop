@@ -285,7 +285,7 @@ def main():
             keyfile = testbed + "/" + T["ssh_key"] + ".pem"
             ssh_opts = ["-o", "UserKnownHostsFile=/dev/null", "-o", "StrictHostKeyChecking=no", "-i", keyfile]
             host = "ubuntu@" + T["elastic_ip"]
-            subprocess.call(["ssh"] + ssh_opts + [host, "/home/ubuntu/surface", testbed, T["ssh_key"], T["controller.private_ip"], T["surface.private_ip"], T["subnet.cidr_block"]])
+            subprocess.call(["ssh"] + ssh_opts + [host, "/home/ubuntu/surface", testbed, T["ssh_key"], T["controller.private_ip"], T["subnet.cidr_block"], T["surface.private_ip"]])
             subprocess.call(["ssh"] + ssh_opts + [host, "hostname"])
             surfacedir = testbed + "/surface"
             try:
