@@ -194,9 +194,9 @@ configure_controller() {
     ## otherwise a simple analysis will be performed
     cmdline="sudo bash $verbose_sh surface $testbed $ssh_key $controller_ip $subnet $surface_ip"
     if [[ -n $surface_hostname ]]; then
-        cmdline2="--hostname $surface_hostname"
+        cmdline+=" --hostname $surface_hostname"
     fi
-    ssh $ssh_opts $ssh_dst "$cmdline $cmdline2" || true
+    ssh $ssh_opts $ssh_dst $cmdline || true
 
     # configure openstack
     cmdline="sudo bash puppet-openstack-configure $verbose -h $controller_hostname -e $elastic_ip $controller_hostname $controller_ip"
@@ -207,6 +207,13 @@ configure_controller() {
 
     # run surface scan again after configuration
     ssh $ssh_opts $ssh_dst "$cmdline $cmdline2" || true
+
+    # run surface scan after configuration
+    cmdline="sudo bash $verbose_sh surface $testbed $ssh_key $controller_ip $subnet $surface_ip"
+    if [[ -n $surface_hostname ]]; then
+        cmdline+=" --hostname $surface_hostname"
+    fi
+    ssh $ssh_opts $ssh_dst $cmdline || true
 
     # copy all logs back to user system
     mkdir -p ${testbed}/logs
