@@ -345,7 +345,7 @@ else
         msg error "Error configuring $node_hostname";
     fi
     scp $ssh_opts $ssh_dst:$node_hostname.log . 2>/dev/null
-    } &
+    }
     pids+=($!)
     wait
 fi
