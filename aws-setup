@@ -9,7 +9,7 @@
 # - create controller and compute instances
 # - create and attach elastic ip to controller
 
-import sys, os, time, shutil
+import sys, os, time, shutil, random
 from boto.vpc import VPCConnection
 from optparse import OptionParser
 import traceback
@@ -350,10 +350,11 @@ def main():
         # take the first instance object
         controller = ec2[0].instances[0]
 
-        info("Created controller instance: {}".format(controller.id))
+        info("Created controller instance: {} ({})".format(controller.id, controller.private_ip_address))
 
         # wait until instance is available
         wait_instance(c, controller.id)
+        time.sleep(2)
 
         f.write("controller.id={}\n".format(controller.id))
         private_ip = controller.private_ip_address
@@ -378,7 +379,8 @@ def main():
                 print traceback.format_exc().split('\n')[-2]
                 error("Could not create compute{} instance".format(node))
             compute = ec2[node].instances[0]
-            info("Created compute{} instance: {}".format(node, compute.id))
+            time.sleep(random.randrange(2,5))
+            info("Created compute{} instance: {} ({})".format(node, compute.id, compute.private_ip_address))
             wait_instance(c, compute.id)
             f.write("compute{}.id={}\n".format(node, compute.id))
             private_ip = compute.private_ip_address
@@ -400,7 +402,8 @@ def main():
                 error("Could not create attack surface instance.")
             surface = ec2[node].instances[0]
             wait_instance(c, surface.id)
-            info("Created attack surface instance: {}".format(surface.id))
+            time.sleep(2)
+            info("Created attack surface instance: {} ({})".format(surface.id, surface.private_ip_address))
             f.write("surface.id={}\n".format(surface.id))
             f.write("surface.private_ip={}\n".format(surface.private_ip_address))
             tags["Name"] = testbed_name + "-surface"

@@ -314,6 +314,7 @@ if [[ -z $node ]]; then
     # Configure compute nodes by recursively calling this script from the
     # controller passing --node, the controller host/ip and the node's internal
     # ip
+    declare -i i
     i=0
     for node_hostname in ${hosts[@]}; do
         node_ip=${ips[$i]}
