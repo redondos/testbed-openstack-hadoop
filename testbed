@@ -231,6 +231,10 @@ def main():
                 name = "controller"
                 print name
                 print "=" * 10
+            elif j==len(instances)-1 and "surface.id" in T:
+                name = "surface"
+                print name
+                print "=" * 8
             else:
                 name = "compute" + str(j)
                 print name
