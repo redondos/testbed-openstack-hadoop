@@ -267,8 +267,10 @@ fi
 if pgrep -f puppet.agent &>/dev/null; then
     msg warn "Puppet agent running"
 else
-    msg warn "Removing stale lock"
-    sudo rm /var/lib/puppet/state/agent_catalog_run.lock 2>/dev/null
+    if [ -f /var/lib/puppet/state/agent_catalog_run.lock ]; then
+        msg warn "Removing stale lock"
+        sudo rm /var/lib/puppet/state/agent_catalog_run.lock 2>/dev/null
+    fi
 fi
 msg "Installing and configuring: OpenStack"
 runcmd puppet agent -t
