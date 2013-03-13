@@ -140,7 +140,7 @@ def main():
                         help="subnet to use for Amazon VPC, in CIDR notation  "
                         '       default: "10.0.0.0/24"')
 
-    parser.add_option("-k", "--key", dest="ssh_key", default="openstack", metavar="KEY",
+    parser.add_option("-k", "--key", dest="ssh_key", default="test", metavar="KEY",
                         help="name of ssh key. it will be created if not nonexistent    "
                         '       default: "openstack"' )
 
