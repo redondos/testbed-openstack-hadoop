@@ -225,7 +225,7 @@ configure_controller() {
 
     # copy surface results to user system
     mkdir -p ${testbed}/surface
-    scp $ssh_opts $ssh_dst:"*nmap* *xml *.surface" ${testbed}/surface || true
+    scp $ssh_opts $ssh_dst:"*nmap* *xml *.surface" ${testbed}/surface 2>/dev/null || true
 }
 
 configure_node() {
