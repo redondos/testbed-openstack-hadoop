@@ -132,6 +132,18 @@ def wait_instance(connection, instance):
             if i >= 10:
                 error("Error creating instance ({}). Check AWS control panel.".format(instance))
 
+def get_private_ip(connection, instance_id):
+    private_ip = None
+    i = 0
+    while not private_ip:
+        i += 1
+        if i > 9:
+            awserror("find compute" + str(node) + "'s private IP address")
+        reservation = connection.get_all_instances([instance_id])
+        instance = reservation[0].instances[0]
+        private_ip = instance.private_ip_address
+    return private_ip
+
 def main():
 
     parser = OptionParser(usage="usage: %prog [options] testbed")
@@ -350,16 +362,13 @@ def main():
         # take the first instance object
         controller = ec2[0].instances[0]
 
-        info("Created controller instance: {} ({})".format(controller.id, controller.private_ip_address))
-
         # wait until instance is available
         wait_instance(c, controller.id)
-        time.sleep(2)
+
+        private_ip = get_private_ip(c, controller.id)
+        info("Created controller instance: {} ({})".format(controller.id, private_ip))
 
         f.write("controller.id={}\n".format(controller.id))
-        private_ip = controller.private_ip_address
-        if not private_ip:
-            awserror("find controller's private IP address")
         f.write("controller.private_ip={}\n".format(private_ip))
 
         # Disable source/destination checking so that controller can be
@@ -380,12 +389,10 @@ def main():
                 error("Could not create compute{} instance".format(node))
             compute = ec2[node].instances[0]
             time.sleep(random.randrange(2,5))
-            info("Created compute{} instance: {} ({})".format(node, compute.id, compute.private_ip_address))
             wait_instance(c, compute.id)
+            private_ip = get_private_ip(c, compute.id)
+            info("Created compute{} instance: {} ({})".format(node, compute.id, private_ip))
             f.write("compute{}.id={}\n".format(node, compute.id))
-            private_ip = compute.private_ip_address
-            if not private_ip:
-                awserror("find compute" + str(node) + "'s private IP address")
             f.write("compute{}.private_ip={} \n".format(node, private_ip))
 
             # Create name tags for nodes
@@ -403,9 +410,10 @@ def main():
             surface = ec2[node].instances[0]
             wait_instance(c, surface.id)
             time.sleep(2)
-            info("Created attack surface instance: {} ({})".format(surface.id, surface.private_ip_address))
+            private_ip = get_private_ip(c, surface.id)
+            info("Created attack surface instance: {} ({})".format(surface.id, private_ip))
             f.write("surface.id={}\n".format(surface.id))
-            f.write("surface.private_ip={}\n".format(surface.private_ip_address))
+            f.write("surface.private_ip={}\n".format(private_ip))
             tags["Name"] = testbed_name + "-surface"
             c.create_tags([surface.id], tags)
 
