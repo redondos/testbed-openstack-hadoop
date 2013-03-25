@@ -134,7 +134,7 @@ def wait_instance(connection, instance):
 
 def main():
 
-    parser = OptionParser(usage="usage: %prog [options] testbed")
+    parser = OptionParser(usage="usage: %prog [options] openstack|hadoop testbed")
 
     parser.add_option("-s", "--subnet", dest="subnet", default="10.0.0.0/24", metavar="SUBNET",
                         help="subnet to use for Amazon VPC, in CIDR notation  "
@@ -161,24 +161,30 @@ def main():
 
     (options, args) = parser.parse_args()
 
-    if len(args) != 1:
+    if len(args) != 2:
+        parser.print_usage()
+        sys.exit(1)
+
+    if args[0] != "openstack" and args[0] != "hadoop":
         parser.print_usage()
         sys.exit(1)
 
     # global variables
-    testbed_name = args[0]
+    testbed_type = args[0]
+    testbed_name = args[1]
     vpc_ip = options.subnet
     desc_file = testbed_name + "/" + testbed_name + ".desc"
     answer = "yes"
 
-    info("Testbed name: " + testbed_name)
+    info("Type: " + testbed_type)
+    info("Name: " + testbed_name)
     info("Subnet: " + options.subnet)
     info("SSH key: " + options.ssh_key)
     info("Flavor: " + options.flavor)
     info("Number of instances: " + str(options.instances) + "\n")
 
-    out = "name={}\nssh_key={}\nflavor={}\ninstances={}\n"\
-            .format(testbed_name, options.ssh_key, options.flavor, options.instances)
+    out = "type={}\nname={}\nssh_key={}\nflavor={}\ninstances={}\n"\
+            .format(testbed_type, testbed_name, options.ssh_key, options.flavor, options.instances)
 
     if not os.path.isdir(testbed_name):
         os.mkdir(testbed_name)
@@ -340,56 +346,66 @@ def main():
     # Run instances in VPC
     ec2 = {} # dictionary of instances
     if options.instances >= 2: # TODO: single-node setup
+        if testbed_type == "openstack":
+            master_name = "controller"
+        elif testbed_type == "hadoop":
+            master_name = "master"
+
         try:
             ec2[0] = c.run_instances('ami-3d4ff254', subnet_id=subnet.id, key_name=options.ssh_key, instance_type=options.flavor)
         except:
             print traceback.format_exc().split('\n')[-2]
-            error("Could not create controller instance.")
+            error("Could not create " + master_name + " instance.")
 
         # run_instances returns a boto.ec2.instance.Reservation class, let's
         # take the first instance object
         controller = ec2[0].instances[0]
 
-        info("Created controller instance: {} ({})".format(controller.id, controller.private_ip_address))
+        info("Created " + master_name + " instance: {} ({})".format(controller.id, controller.private_ip_address))
 
         # wait until instance is available
         wait_instance(c, controller.id)
         time.sleep(2)
 
-        f.write("controller.id={}\n".format(controller.id))
+        f.write(master_name + ".id={}\n".format(controller.id))
         private_ip = controller.private_ip_address
         if not private_ip:
-            awserror("find controller's private IP address")
-        f.write("controller.private_ip={}\n".format(private_ip))
+            awserror("find " + master_name + " private IP address")
+        f.write(master_name + ".private_ip={}\n".format(private_ip))
 
         # Disable source/destination checking so that controller can be
         # used as NAT router (due to scarcity of Elastic IPs)
         controller.modify_attribute("sourceDestCheck", "false")
-        info("Disabled source/destination check for controller instance")
+        info("Disabled source/destination check for " + master_name + " instance")
 
         # Create a name tag for controller
         tags = {}
-        tags["Name"] = testbed_name + "-controller"
+        tags["Name"] = testbed_name + "-" + master_name
         c.create_tags([controller.id], tags)
 
         for node in xrange(1, int(options.instances)):
+            if testbed_type == "openstack":
+                node_name = "compute{}".format(node)
+            elif testbed_type == "hadoop":
+                node_name = "slave{}".format(node)
+
             try:
                 ec2[node] = c.run_instances('ami-3d4ff254', subnet_id=subnet.id, key_name=options.ssh_key, instance_type=options.flavor)
             except:
                 print traceback.format_exc().split('\n')[-2]
-                error("Could not create compute{} instance".format(node))
+                error("Could not create " + node_name + " instance")
             compute = ec2[node].instances[0]
             time.sleep(random.randrange(2,5))
-            info("Created compute{} instance: {} ({})".format(node, compute.id, compute.private_ip_address))
+            info("Created " + node_name + " instance: {} ({})".format(compute.id, compute.private_ip_address))
             wait_instance(c, compute.id)
-            f.write("compute{}.id={}\n".format(node, compute.id))
+            f.write(node_name + ".id={}\n".format(compute.id))
             private_ip = compute.private_ip_address
             if not private_ip:
-                awserror("find compute" + str(node) + "'s private IP address")
-            f.write("compute{}.private_ip={} \n".format(node, private_ip))
+                awserror("find " + node_name + "'s private IP address")
+            f.write(node_name + ".private_ip={} \n".format(private_ip))
 
             # Create name tags for nodes
-            tags["Name"] = testbed_name + "-compute" + str(node)
+            tags["Name"] = testbed_name + "-" + node_name
             c.create_tags([compute.id], tags)
 
         # create surface node
@@ -410,7 +426,7 @@ def main():
             c.create_tags([surface.id], tags)
 
         # Attach elastic ip to controller
-        warn("Waiting for controller to spawn to attach IP")
+        warn("Waiting for " + master_name + " to spawn to attach IP")
         if not attach_ip(c, ec2[0].instances[0].id, ip, 120):
             error("Timeout reached while trying to attach Elastic IP. Aborting.")
         info("Attached Elastic IP")

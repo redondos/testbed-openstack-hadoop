@@ -1,0 +1,277 @@
+#!/usr/bin/env bash
+
+# Color escape codes
+RESTORE='\033[0m'
+RED='\033[00;31m'
+GREEN='\033[00;32m'
+YELLOW='\033[00;33m'
+
+msg() {
+    case "$1" in
+        error)  echo -ne "$RED"                 >&2
+                echo "$0@$hostname: ${@:2}"     >&2
+                ;;
+        warn)   echo -ne "$YELLOW"              >&2
+                echo "$0@$hostname: ${@:2}"     >&2
+                ;;
+        *)      echo -ne "$GREEN"
+                echo "$0@$hostname: ${@}"
+    esac
+
+    # restore normal colors
+    echo -ne "$restore"
+    echo -ne "$restore"    >&2
+}
+
+installpkg() {
+    if ! dpkg -s $1 &>/dev/null; then
+        msg "Installing: $1"
+        runcmd aptitude -y install $@
+    fi
+}
+
+runcmd() {
+    if [[ -n $options_verbose ]]; then
+        "$@" | tee -a $options_logfile
+    else
+        "$@" &>> $options_logfile
+    fi
+}
+
+if ((UID!=0)); then
+    msg error "This script needs to be run as root"
+    exit 1
+fi
+
+# parse command-line options
+ARGS=$(getopt -o "l:h:e:v" -l "logfile:,hostname:,elastic:,verbose" -n "$0" -- "$@")
+
+if [ $? != 0 ] ; then
+    msg error "error parsing command-line options"
+    exit 1
+fi
+
+eval set -- "$ARGS"
+
+while true; do
+    case "$1" in
+        -l|--logfile)
+            options_logfile="$2"
+            shift 2;;
+        -h|--hostname)
+            options_hostname="$2"
+            shift 2;;
+        -e|--elastic)
+            options_elastic_ip="$2"
+            shift 2;;
+        -v|--verbose)
+            options_verbose=1
+            set -x
+            shift;;
+        --)
+            shift
+            break;;
+        *)
+            msg error "invalid command-line option: $1"
+            break;;
+    esac
+done
+
+# check for master host/ip command-line arguments
+if (($#!=2)); then
+    usage
+    exit 1
+fi
+master_hostname=$1
+master_ip=$2
+
+# if hostname hasn't been specified, assume master instance
+if [[ -z $options_hostname ]]; then
+    options_hostname=$master_hostname
+    hostname=$options_hostname
+    # msg "Node hostname not specified (--hostname). Assuming this is the master node"
+fi
+hostname=$options_hostname
+
+# by default log to HOSTNAME.log
+if [[ -z $options_logfile ]]; then
+    options_logfile=${options_hostname}.log
+fi
+msg "Logfile: $options_logfile"
+rm -f "$options_logfile"
+touch "$options_logfile"
+
+# set hostname and make sure we have an address for the master node
+grep -q $master_hostname /etc/hosts || echo "$master_ip $master_hostname" >> /etc/hosts
+
+export TERM=xterm
+HADOOP=$(curl -s http://apache.osuosl.org/hadoop/core/ |grep -o 'hadoop-1.1..' | head -1)
+HADOOP_DIR=~/$HADOOP
+MASTER=$1
+REPLICATION=$2
+
+install_java() {
+if ! dpkg -s sun-java6-jdk &>/dev/null; then
+    msg "Installing Java" 
+    git clone git://github.com/flexiondotorg/oab-java6.git
+    ./oab-java6/oab-java.sh
+    aptitude -y install sun-java6-jdk
+fi
+}
+
+preconfigure_hadoop() {
+runcmd addgroup hadoop
+runcmd adduser ubuntu hadoop
+runcmd ln -sf $HADOOP_DIR /usr/local/hadoop
+runcmd mkdir -p /app/hadoop/tmp
+runcmd chown -R ubuntu:hadoop /app/
+runcmd chmod 750 /app/hadoop/tmp
+}
+
+configure_bashrc() {
+    if ! grep -q JAVA_HOME ~/.bashrc; then
+    cat >> .bashrc << EOF
+# Set Hadoop-related environment variables
+export HADOOP_HOME=/usr/local/hadoop
+
+# Set JAVA_HOME (we will also configure JAVA_HOME directly for Hadoop later on)
+export JAVA_HOME=/usr/lib/jvm/java-6-sun
+
+# Some convenient aliases and functions for running Hadoop-related commands
+unalias fs &> /dev/null
+alias fs="hadoop fs"
+unalias hls &> /dev/null
+alias hls="fs -ls"
+
+# If you have LZO compression enabled in your Hadoop cluster and
+# compress job outputs with LZOP (not covered in this tutorial):
+# Conveniently inspect an LZOP compressed file from the command
+# line; run via:
+#
+# $ lzohead /hdfs/path/to/lzop/compressed/file.lzo
+#
+# Requires installed 'lzop' command.
+#
+lzohead () {
+    hadoop fs -cat $1 | lzop -dc | head -1000 | less
+}
+
+# Add Hadoop bin/ directory to PATH
+export PATH=$PATH:/usr/local/hadoop/bin
+EOF
+    fi
+}
+
+configure_hadoop() {
+if [[ ! -d $HADOOP_DIR ]]; then
+    msg "Installing Hadoop"
+    wget http://apache.osuosl.org/hadoop/core/$HADOOP/$HADOOP-bin.tar.gz
+    tar zvxf hadoop*bin.tar.gz
+
+    # core-site.xml
+    cat > $HADOOP_DIR/conf/core-site.xml << EOF
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+
+<!-- Put site-specific property overrides in this file. -->
+
+<configuration>
+
+<property>
+  <name>hadoop.tmp.dir</name>
+  <value>/app/hadoop/tmp</value>
+  <description>A base for other temporary directories.</description>
+</property>
+
+<property>
+  <name>fs.default.name</name>
+  <value>hdfs://${MASTER}:54310</value>
+  <description>The name of the default file system.  A URI whose
+  scheme and authority determine the FileSystem implementation.  The
+  uri's scheme determines the config property (fs.SCHEME.impl) naming
+  the FileSystem implementation class.  The uri's authority is used to
+  determine the host, port, etc. for a filesystem.</description>
+</property>
+
+</configuration>
+EOF
+
+    # hdfs-site.xml
+    cat > $HADOOP_DIR/conf/hdfs-site.xml << EOF
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+
+<!-- Put site-specific property overrides in this file. -->
+
+<configuration>
+
+<property>
+  <name>dfs.replication</name>
+  <value>${REPLICATION}</value>
+  <description>Default block replication.
+  The actual number of replications can be specified when the file is created.
+  The default is used if replication is not specified in create time.
+  </description>
+</property>
+
+</configuration>
+EOF
+
+    # mapred-site.xml
+    cat > $HADOOP_DIR/conf/mapred-site.xml << EOF
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+
+<!-- Put site-specific property overrides in this file. -->
+
+<configuration>
+
+<property>
+  <name>mapred.job.tracker</name>
+  <value>${MASTER}:54311</value>
+  <description>The host and port that the MapReduce job tracker runs
+  at.  If "local", then jobs are run in-process as a single map
+  and reduce task.
+  </description>
+</property>
+
+</configuration>
+EOF
+
+    # hadoop-env.sh
+    if ! grep -q HADOOP_OPTS=-Djava.net.preferIPv4Stack=true $HADOOP_DIR/conf/hadoop-env.sh; then
+            echo "export HADOOP_OPTS=-Djava.net.preferIPv4Stack=true" >> $HADOOP_DIR/conf/hadoop-env.sh
+    fi
+    sed -i 's:.*JAVA_HOME.*:export JAVA_HOME=/usr/lib/jvm/java-6-sun:' $HADOOP_DIR/conf/hadoop-env.sh
+fi
+}
+
+msg "Updating package database"
+runcmd aptitude update
+
+installpkg git
+
+msg "Installing Java"
+runcmd install_java
+
+msg "Preconfiguring Hadoop"
+runcmd preconfigure_hadoop
+runcmd configure_bashrc
+
+if [[ ! -e ~/.ssh/id_rsa ]]; then
+    msg "Creating SSH key"
+    runcmd ssh-keygen -t rsa -f ~/.ssh/id_rsa -P ""
+    cat $HOME/.ssh/id_rsa.pub >> $HOME/.ssh/authorized_keys
+fi
+
+msg "Configuring Hadoop"
+runcmd configure_hadoop
+
+chown -R ubuntu:hadoop ~
+msg "Formatting DFS"
+runcmd su -c '/usr/local/hadoop/bin/hadoop namenode -format -force' - ubuntu
+msg "Starting Hadoop"
+runcmd su -c /usr/local/hadoop/bin/start-all.sh - ubuntu
+
+# su -c jps - ubuntu
+# su -c dfs -ls - ubuntu

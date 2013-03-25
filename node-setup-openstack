@@ -187,7 +187,7 @@ configure_controller() {
     scp $ssh_opts "${files[@]}" $ssh_dst: 2>/dev/null
 
     # configure controller as nat router
-    ssh $ssh_opts $ssh_dst "sudo bash network-setup server $controller_hostname" &>/dev/null
+    ssh $ssh_opts $ssh_dst "sudo bash network-setup --server --hostname $controller_hostname" &>/dev/null
 
     # run surface scan before configuration
     ## if surface_ip is set, `surface' will use nmap to scan the subnet
@@ -233,7 +233,7 @@ configure_node() {
     scp $ssh_opts "${files[@]}" $ssh_dst: 2>/dev/null
 
     # modify default route to connect to the internet via controller
-    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh network-setup client $node_hostname $controller_ip" 2>/dev/null
+    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh network-setup --client --hostname $node_hostname --server_ip $controller_ip" 2>/dev/null
 
     # run attack surface analysis before configuration
     ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh surface node $node_hostname" 2>/dev/null
@@ -252,7 +252,7 @@ configure_node() {
 # global variables
 hostname=$(hostname)
 user=ubuntu
-files=(puppet-openstack-configure site.pp node-setup network-setup surface)
+files=(puppet-openstack-configure site.pp node-setup-openstack network-setup surface)
 ssh_opts=" -qo UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
 declare -a pids
 

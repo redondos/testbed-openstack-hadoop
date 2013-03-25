@@ -1,0 +1,361 @@
+#!/bin/bash
+# 2013 Angelo Olivera <aolivera@gmail.com>
+#
+# Set up remote nodes using hadoop-configure
+#
+
+# kill children if script was interrupted
+trap 'kill ${pids[@]} 2>/dev/null' SIGTERM
+trap 'kill ${pids[@]} 2>/dev/null' SIGINT
+
+# Color escape codes
+RESTORE='\033[0m'
+RED='\033[00;31m'
+GREEN='\033[00;32m'
+YELLOW='\033[00;33m'
+
+msg() {
+    case "$1" in
+        error)  echo -ne "$RED"     >&2
+                echo "$0@$hostname: ${@:2}"    >&2
+                exit 1
+                ;;
+        warn)   echo -ne "$YELLOW"  >&2
+                echo "$0@$hostname: ${@:2}"    >&2
+                ;;
+        *)      echo -ne "$GREEN"
+                echo "$0@$hostname: ${@}"
+    esac
+
+    # restore normal colors
+    echo -ne "$restore"
+    echo -ne "$restore" >&2
+}
+
+usage() {
+    # print to stderr
+    exec 5>&1
+    exec 1>&2
+    echo "Usage: (-h for more information)"
+    echo "$0 [[-f DESCFILE] | [-n -i IP -h HOSTNAME -c CONTROLLER_IP -n CONTROLLER_HOSTNAME -k SSH_KEY]] TESTBED"
+    # restore stdout
+    exec 0>&5
+}
+
+help() {
+    # print to stderr
+    exec 5>&1
+    exec 1>&2
+    echo "Usage: $0 [options] TESTBED"
+    echo ""
+    echo "TESTBED is the name of the set of machines where OpenStack will be installed."
+    echo ""
+    echo "Options:"
+    echo "-f DESCFILE, --file DESCFILE"
+    echo "                      Description of the tesbed with entries in key=value format"
+    echo "                      default: TESTBED/TESTBED.desc"
+    echo "-n, --node"
+    echo "                      Configure from command-line instead of using a description file"
+    echo "-k KEY, --key KEY"
+    echo "                      Name of SSH key to use"
+    echo "                      default: openstack"
+    echo "-i IP, --ip IP"
+    echo "                      Node IP address"
+    echo "-h HOSTNAME, --hostname HOSTNAME"
+    echo "                      Node hostname"
+    echo "-c IP, --master_ip IP"
+    echo "                      Controller IP address"
+    echo "-t HOSTNAME, --master_hostname HOSTNAME"
+    echo "                      Controller hostname"
+    echo "--cinder"
+    echo "                      Install OpenStack Cinder"
+    echo "--replication"
+    echo "                      Number of Hadoop nodes in cluster"
+    echo "-v, --verbose"
+    echo "                      Show verbose progress"
+    echo ""
+    echo "Example:"
+    echo "$0 openstack"
+    echo "   This command will read testbed description from openstack.desc"
+    echo "   (or openstack/openstack.desc) and configure the nodes accordingly."
+    echo ""
+    echo "$0 -i 10.0.0.5 -h slave1.ec2.internal -c 10.0.0.1 master.ec2.internal"
+    echo "   This command will connect to 10.0.0.5 and configure it as a slave"
+    echo "   node with master 10.0.0.1"
+    echo ""
+    echo "Notes:"
+    echo "This tool will use the following values from DESCFILE:"
+    echo " ssh_key, master.elastic_ip, master_private_ip, slave*_private_ip"
+    echo ""
+    # restore stdout
+    exec 1>&5
+}
+
+ARGS=$(getopt -o "hf:i:h:c:vn" -l "help,file:,ip:,surface,hostname:,master_ip:,master_hostname:,key:,verbose,node,cinder,replication:" -n "$0" -- "$@")
+
+if [ $? != 0 ] ; then
+    msg error "error parsing command-line options"
+    exit 1
+fi
+
+eval set -- "$ARGS"
+
+while true; do
+    case "$1" in
+        -h|--help)
+            help
+            exit 0
+            shift;;
+        -f|--file)
+            testbed_file=$2
+            shift 2;;
+        -i|--ip)
+            node_ip=$2
+            shift 2;;
+        -h|--hostname)
+            node_hostname=$2
+            shift 2;;
+        --master_ip)
+            master_ip=$2
+            shift 2;;
+        --master_hostname)
+            master_hostname=$2
+            shift 2;;
+        -n|--node)
+            node=1
+            shift;;
+        -k|--key)
+            ssh_key=$2
+            shift 2;;
+        --replication)
+            replication=$2
+            shift 2;;
+        --surface)
+            surface=1
+            shift;;
+        --cinder)
+            cinder=1
+            shift;;
+        -v|--verbose)
+            verbose="-v"
+            verbose_sh="-x"
+            set -x
+            shift;;
+        --)
+            shift
+            break;;
+        *)
+            msg error "invalid command-line option: $1"
+            break;;
+    esac
+done
+
+parsedesc() {
+    ips=()
+    while IFS="=" read key value; do
+        case $key in
+            ssh_key)
+                ssh_key=$value
+                ;;
+            *elastic_ip)
+                elastic_ip=$value
+                ;;
+            master.private_ip)
+                master_hostname=$testbed-${key%%.*}.ec2.internal
+                master_ip=$value
+                ;;
+            slave*.private_ip)
+                hosts+=($testbed-${key%%.*}.ec2.internal)
+                ips+=($value)
+                ;;
+            surface*.private_ip)
+                surface_hostname=$testbed-${key%%.*}.ec2.internal
+                surface_ip=$value
+                ;;
+            subnet.cidr_block)
+                subnet=$value
+                ;;
+        esac
+    done < $1
+}
+
+configure_master() {
+    # wait until master is online
+    for i in {1..20}; do
+        if ssh $ssh_opts $ssh_dst true; then
+            break
+        fi
+        sleep 1
+    done
+
+    # copy scripts to master
+    scp $ssh_opts "${files[@]}" $ssh_dst: 2>/dev/null
+
+    # configure master as nat router
+    cmdline="sudo bash $verbose_sh network-setup --server --hostname $master_hostname --ip $master_ip"
+    ((i=0))
+    # add all nodes to /etc/hosts
+    while [[ -n ${hosts[$i]} && -n ${ips[$i]} ]]; do
+        cmdline+=" ${ips[i]} ${hosts[i]}"
+        ((i++))
+    done
+    ssh $ssh_opts $ssh_dst "$cmdline" &>/dev/null
+
+    # run surface scan before configuration
+    ## if surface_ip is set, `surface' will use nmap to scan the subnet
+    ## otherwise a simple analysis will be performed
+    cmdline="sudo bash $verbose_sh surface $testbed $ssh_key $master_ip $subnet $surface_ip"
+    if [[ -n $surface_hostname ]]; then
+        cmdline+=" --hostname $surface_hostname"
+    fi
+    ssh $ssh_opts $ssh_dst $cmdline || true
+
+    # configure hadoop
+    cmdline="sudo bash hadoop-configure $verbose $master_hostname $replication"
+    if [[ -n $cinder ]]; then
+        cmdline+=" --cinder"
+    fi
+    ssh $ssh_opts $ssh_dst "$cmdline" || return 1
+
+    # run surface scan after configuration
+    cmdline="sudo bash $verbose_sh surface $testbed $ssh_key $master_ip $subnet $surface_ip"
+    if [[ -n $surface_hostname ]]; then
+        cmdline+=" --hostname $surface_hostname"
+    fi
+    ssh $ssh_opts $ssh_dst $cmdline || true
+
+    # copy all logs back to user system
+    mkdir -p ${testbed}/logs
+    scp $ssh_opts $ssh_dst:$master_hostname.log ${testbed}/logs || true
+
+    # copy surface results to user system
+    mkdir -p ${testbed}/surface
+    scp $ssh_opts $ssh_dst:"*nmap* *xml *.surface" ${testbed}/surface 2>/dev/null || true
+}
+
+configure_node() {
+    # copy scripts to node
+    scp $ssh_opts "${files[@]}" $ssh_dst: 2>/dev/null
+
+    # modify default route to connect to the internet via master
+    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh network-setup --client --hostname $node_hostname --client_ip $master_ip" 2>/dev/null
+
+    # run attack surface analysis before configuration
+    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh surface node $node_hostname" 2>/dev/null
+
+    # configure hadoop
+    echo DEBUG: master_hostname=$master_hostname replication=$replication
+    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh hadoop-configure $verbose --hostname $node_hostname $master_hostname $replication" || return 1
+
+    # run attack surface analysis after configuration
+    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh surface node $node_hostname" 2>/dev/null
+
+    # copy results back to master
+    scp $ssh_opts $ssh_dst:$node_hostname.log . 2>/dev/null || true
+    scp $ssh_opts $ssh_dst:"*nmap* *xml *.surface" . 2>/dev/null || true
+}
+
+# global variables
+hostname=$(hostname)
+user=ubuntu
+files=(hadoop-configure node-setup-hadoop network-setup surface)
+ssh_opts=" -qo UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+declare -a pids
+
+# if testbed file wasn't specified in the command-line,
+# try to find it in the $testbed directory
+if (($#!=1)); then
+    usage
+    exit 1
+fi
+
+testbed=$1
+[[ -z $testbed_file ]] && testbed_file=$1/$1.desc
+
+if [[ -z $testbed ]]; then
+    testbed=${testbed_file%.*}
+    testbed=${testbed##*/}
+fi
+
+# configuring testbed from description file
+if [[ -z $node ]]; then
+
+    [[ ! -e $testbed_file ]] && msg error "$testbed_file not found"
+
+    declare -a hosts
+    parsedesc $testbed_file
+
+    # try to find ssh key in current directory, "testbed", "keys"
+    basedir=$(dirname $testbed_file)
+    for dir in $basedir $testbed keys; do
+        if [ -f $dir/$ssh_key.pem ]; then
+            ssh_key_file=$dir/$ssh_key.pem
+            break
+        fi
+    done
+    [[ -f $ssh_key_file ]] || msg error "Could not find SSH key: $ssh_key"
+
+    msg warn "Connecting to $elastic_ip"
+    msg warn "Setting up node: $master_hostname ($master_ip)"
+
+    ssh_opts+=" -i $ssh_key_file"
+    files+=($ssh_key_file)
+    ssh_dst="$user@$elastic_ip"
+    ((replication=${#ips[@]}+1))
+
+    # Configure master by connecting via ssh and running
+    # hadoop-configure
+    { if configure_master; then
+            msg "Successfully configured $master_hostname"
+        else
+            msg error "Error configuring $master_hostname"
+        fi
+    } & # run in the background
+    pids+=($!)
+
+    # wait a few seconds to start configuring the slaves
+    sleep 30
+
+    # Configure slave nodes by recursively calling this script from the
+    # master passing --node, the master host/ip and the node's internal
+    # ip
+    declare -i i
+    i=0
+    for node_hostname in ${hosts[@]}; do
+        node_ip=${ips[$i]}
+        msg "Setting up node: $node_hostname ($node_ip)"
+        ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh node-setup-hadoop --node --ip $node_ip --hostname $node_hostname --master_ip $master_ip --master_hostname $master_hostname --key $ssh_key --replication $replication $testbed" &
+        pids+=($!)
+        i+=1
+    done
+
+    wait
+
+    msg "Setup complete."
+
+    mkdir -p ${testbed}/{logs,surface}
+    scp $ssh_opts $ssh_dst:$testbed-slave*.log ${testbed}/logs 2>/dev/null
+    scp $ssh_opts $ssh_dst:surface*.log ${testbed}/surface 2>/dev/null || true
+
+# configuring node (called recursively from this script)
+else
+    if [[ -z $node_ip || -z $node_hostname || -z $master_ip || \
+      -z $master_hostname || -z $ssh_key || -z $replication ]]; then
+        usage
+        exit 1
+    fi
+
+    ssh_opts+=" -i $ssh_key.pem"
+    ssh_dst="$user@$node_ip"
+    echo DEBUG: node_hostname=$node_hostname
+    { if configure_node; then
+        msg "Successfully configured $node_hostname"
+    else
+        msg error "Error configuring $node_hostname";
+    fi
+    scp $ssh_opts $ssh_dst:$node_hostname.log . 2>/dev/null
+    }
+    pids+=($!)
+    wait
+fi
+

@@ -25,21 +25,65 @@ msg() {
     esac
 
     # restore normal colors
-    echo -ne "$restore"
-    echo -ne "$restore"    >&2
+    echo -ne "$RESTORE"
+    echo -ne "$RESTORE"    >&2
 }
 
+usage() {
+    # print to stderr
+    exec 5>&1
+    exec 1>&2
+    echo "Usage:"
+    echo "$0 --hostname HOSTNAME --ip PRIVATE_IP server"
+    echo "$0 --hostname HOSTNAME --ip PRIVATE_IP client"
+    # restore stdout
+    exec 0>&5
+}
+ARGS=$(getopt -l "client,server,hostname:,ip:,server_hostname:,server_ip:" -n "$0" -- ignore "$@")
+eval set -- "$ARGS"
+while true; do
+    case "$1" in
+        --client)
+            command=client
+            shift;;
+        --server)
+            command=server
+            shift;;
+        --hostname)
+            hostname=$2
+            shift 2;;
+        --ip)
+            ip=$2
+            shift 2;;
+        --server_hostname)
+            server_hostname=$2
+            shift 2;;
+        --server_ip)
+            server_ip=$2
+            shift 2;;
+        --)
+            shift
+            break;;
+        *)
+            msg error "invalid command-line option: $1"
+            break;;
+    esac
+done
+
 sethostname() {
-    hostname="$1"
     [[ $(hostname) == $hostname ]] && return 0
     msg "Setting hostname: $hostname"
     hostname $hostname
     echo $(hostname) > /etc/hostname
+    if ! grep -q 127.0.0.1 /etc/hosts; then
+        echo "127.0.0.1 localhost" >> /etc/hosts
+    fi
+
     grep -q $hostname /etc/hosts && return 0
-    if grep -q 127.0.0.1 /etc/hosts; then
-        sed -ie "s/127.0.0.1.*/& $hostname/" /etc/hosts
+    if [[ -n $ip ]]; then
+        echo "$ip $hostname" >> /etc/hosts
     else
-        echo "127.0.0.1 localhost $hostname" >> /etc/hosts
+        sed -ie "s/127.0.0.1.*/& $hostname/" /etc/hosts
     fi
 }
 
@@ -61,15 +105,22 @@ set_default_route() {
     fi
 }
 
-if [[ -n $2 ]]; then
-    sethostname $2
+if [[ -n $hostname ]]; then
+    sethostname
 fi
 
-if [[ "$1" == client ]]; then
-    set_default_route $3
-elif [[ "$1" == server ]]; then
-    setup_masquerade
-else
-    msg error "Unknown action: $@"
-fi
+case "$command" in
+    client) set_default_route $server_ip;;
+    server) setup_masquerade;;
+    *) msg error "Unknown action: $@"
+        shift;;
+esac
+
+while [[ -n $1 ]] && [[ -n $2 ]]; do
+    if ! grep -q $1 /etc/hosts; then
+        echo "Adding $2 ($1) to /etc/hosts"
+        echo $1 $2 >> /etc/hosts
+    fi
+    shift 2
+done
 
