@@ -156,7 +156,7 @@ if [[ $1 == "scan" ]]; then
 
     installpkg nmap
     msg warn "nmap: Scanning subnet $subnet from $my_ip"
-    runcmd nmap -A -oA nmap-$suffix $subnet --exclude $my_ip
+    runcmd nmap -oA nmap-$suffix -p - $subnet --exclude $my_ip
     nmap_files=($(ls -t *.nmap))
     msg "Scan finished: " $(tail -n 1 ${nmap_files[0]})
     msg warn "Full results saved in nmap-${suffix}.{gnmap,nmap,xml}"
