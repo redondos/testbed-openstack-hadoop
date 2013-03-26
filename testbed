@@ -94,7 +94,7 @@ def keys_with_value(D, value):
  return [k for k, v in D.iteritems() if value in v]
 
 def main():
-    parser = OptionParser(usage="usage: %prog [options] start|stop|status|destroy|list|describe|create|configure|ssh testbed")
+    parser = OptionParser(usage="usage: %prog [options] start|stop|status|destroy|list|describe|create|configure|ssh|graph testbed")
 
     parser.add_option("-y", "--yes", action="store_true", dest="yes", default=False,
                         help="answer yes to all questions              ")
