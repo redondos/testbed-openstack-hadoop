@@ -125,6 +125,11 @@ def main():
     parser.add_option("--cinder", action="store_true", dest="cinder", default=False,
                         help="install openstack cinder instead of nova-volume    ")
 
+    parser.add_option("-t", "--timeout", dest="tcpdump_timeout", default="auto", metavar="SECONDS",
+                        help="for 'graph' command: timeout for network traffic capture. "
+                        "if set to 'auto', tcpdump will quit after performing a set of prefixed operations      "
+                        "       default: auto")
+
     (options, args) = parser.parse_args()
 
     if not len(args):
@@ -304,11 +309,15 @@ def main():
     elif command == "graph":
         keyfile = testbed + "/" + T["ssh_key"] + ".pem"
         host = "ubuntu@" + T["elastic_ip"]
+        info("Copying graph scripts to " + host)
         ssh_opts = ["-o", "UserKnownHostsFile=/dev/null", "-o", "StrictHostKeyChecking=no", "-i", keyfile]
-        subprocess.call(["scp"] + ssh_opts + ["port-process.csv", "traffic-analysis", "port-replace.py", host + ":"], stderr=None, stdout=None)
+        subprocess.call(["scp"] + ssh_opts + ["port-process.csv", "traffic-analysis", "port-replace.py", host + ":"], stdout=None, stderr=None)
         cmdline = [host, "/usr/bin/sudo", "/home/ubuntu/traffic-analysis", testbed, "2"]
         if options.verbose: cmdline.append("-v")
+        if options.tcpdump_timeout:
+            cmdline += ["--timeout", options.tcpdump_timeout]
         subprocess.call(["ssh"] + ssh_opts + cmdline, stderr=None)
+        info("Copying results from " + host)
         subprocess.call(["scp"] + ssh_opts + ["-r", host + ":graph", testbed], stderr=None)
 
     else:

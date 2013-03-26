@@ -49,11 +49,27 @@ run_tcpdump() {
     # sleep $seconds && kill $pid &>/dev/null
 }
 
+ARGS=$(getopt -o "v.t:" -l "verbose,timeout:" -n "$0" -- "$@")
+eval set -- "$ARGS"
+while true; do
+    case "$1" in
+        -v|--verbose)
+            set -x
+            shift;;
+        -t|--timeout)
+            tcpdump_timeout=$2
+            shift 2;;
+        --)
+            shift
+            break;;
+        *)
+            msg error "invalid command-line option: $1"
+            break;;
+    esac
+done
+
 testbed=$1
 instances=$2
-if [[ $3 == "-v" ]]; then
-    set -x
-fi
 
 mkdir -p graph
 
@@ -62,8 +78,10 @@ installpkg tshark
 installpkg python
 installpkg graphviz
 installpkg libtext-csv-perl
-runcmd wget --progress=dot http://iweb.dl.sourceforge.net/project/afterglow/AfterGlow%201.x/1.6.2/afterglow-1.6.2.tar.gz
-runcmd tar zvxf afterglow-1.6.2.tar.gz
+if [[ ! -e afterglow-1.6.2.tar.gz ]]; then
+    runcmd wget --progress=dot http://iweb.dl.sourceforge.net/project/afterglow/AfterGlow%201.x/1.6.2/afterglow-1.6.2.tar.gz
+    runcmd tar zvxf afterglow-1.6.2.tar.gz
+fi
 
 cd graph
 
@@ -79,20 +97,26 @@ source /root/openrc
 msg "Downloading Cirros image"
 img_id=$(glance image-create --name "cirros-0.3.1-i386" --container-format bare --copy-from http://download.cirros-cloud.net/0.3.1/cirros-0.3.1-i386-disk.img --is-public true | awk '$2 == "id" {print $4}')
 msg "Creating OpenStack instances"
-echo instances: $instances
 for i in {1..$instances}; do
-    instance=$(nova --no-cache boot --image $img_id --flavor 1 cirros &)
+    instance=$(nova --no-cache boot --image $img_id --flavor 1 cirros) &
     pidnova=$!
     sleep 3
     kill $pidnova &>/dev/null
 done
 
-tcpdump_end=$(date +%s)
-if ((tcpdump_end-tcpdump_start > 60)); then
-    kill $pid
+# kill tcpdump if timeout not specified
+if [[ -z $tcpdump_timeout ]] || [[ $tcpdump_timeout == auto ]]; then
+    kill $pid &>/dev/null
 fi
 
-kill $pid &>/dev/null
+# kill tcpdump when we've reached the timeout
+while sleep 1; do
+    tcpdump_end=$(date +%s)
+    if ((tcpdump_end-tcpdump_start > $tcpdump_timeout)); then
+        kill $pid &>/dev/null
+        break
+    fi
+done
 
 msg "Analyzing packet dump"
 msg "all.csv"
