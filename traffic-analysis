@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# 2013 Angelo Olivera <aolivera@gmail.com>
+
+# Color escape codes
+RESTORE='\033[0m'
+RED='\033[00;31m'
+GREEN='\033[00;32m'
+YELLOW='\033[00;33m'
+
+msg() {
+    hostname=$(hostname)
+    case "$1" in
+        error)  echo -ne "$RED"                 >&2
+                echo "$0@$hostname: ${@:2}"     >&2
+                ;;
+        warn)   echo -ne "$YELLOW"              >&2
+                echo "$0@$hostname: ${@:2}"     >&2
+                ;;
+        *)      echo -ne "$GREEN"
+                echo "$0@$hostname: ${@}"
+    esac
+
+    # restore normal colors
+    echo -ne "$restore"
+    echo -ne "$restore"    >&2
+}
+
+installpkg() {
+    if ! dpkg -s $1 &>/dev/null; then
+        [[ $2 == silent ]] || msg "Installing: $1"
+        runcmd aptitude -y install $1
+    fi
+}
+
+runcmd() {
+    if [[ -n $options_verbose ]]; then
+        "$@" | tee -a graph/$testbed-graph.log
+    else
+        "$@" &>> graph/$testbed-graph.log
+    fi
+}
+
+run_tcpdump() {
+    seconds=30
+    msg "Capturing packets for $seconds seconds"
+    tcpdump -w capture.pcap &
+    pid=$!
+    sleep $seconds && kill $pid &>/dev/null
+}
+
+testbed=$1
+instances=$2
+if [[ $3 == "-v" ]]; then
+    set -x
+fi
+
+mkdir -p graph
+
+installpkg tcpdump
+installpkg tshark
+installpkg python
+installpkg graphviz
+installpkg libtext-csv-perl
+runcmd wget --progress=dot http://iweb.dl.sourceforge.net/project/afterglow/AfterGlow%201.x/1.6.2/afterglow-1.6.2.tar.gz
+runcmd tar zvxf afterglow-1.6.2.tar.gz
+
+cd graph
+
+# run capture (60 second max)
+run_tcpdump &
+pid=$!
+
+sleep 2
+
+# create an image and some instances
+msg "Creating OpenStack instances"
+source /root/openrc
+img_id=$(glance image-create --name "cirros-0.3.1-i386" --container-format bare --copy-from http://download.cirros-cloud.net/0.3.1/cirros-0.3.1-i386-disk.img --is-public true | awk '$2 == "id" {print $4}')
+for i in {1..$instances}; do
+    img_id=$(nova --no-cache boot --image $img_id --flavor 1 cirros &)
+    pidnova=$!
+    sleep 3
+    kill $pidnova &>/dev/null
+done
+
+kill $pid &>/dev/null
+
+msg "Analyzing packet dump"
+msg "all.csv"
+tshark -r capture.pcap -T fields -E separator=, -E quote=d -e ip.src -e ip.dst -e tcp.srcport -e tcp.dstport > all.csv 2>/dev/null
+msg "srcip-dstip.csv"
+tshark -r capture.pcap -T fields -E separator=, -E quote=d -e ip.src -e ip.dst > srcip-dstip.csv 2>/dev/null
+msg "srcip-srcport.csv"
+tshark -r capture.pcap -T fields -E separator=, -E quote=d -e ip.src -e tcp.srcport > srcip-srcport.csv 2>/dev/null
+msg "srcport-dstport.csv"
+tshark -r capture.pcap -T fields -E separator=, -E quote=d -e tcp.srcport -e tcp.dstport > srcport-dstport.csv 2>/dev/null
+msg "dstport-dstip.csv"
+tshark -r capture.pcap -T fields -E separator=, -E quote=d -e tcp.dstport -e ip.dst > dstport-dstip.csv 2>/dev/null
+
+perl afterglow*/src/perl/graph/afterglow.pl -t < all.csv > all.afterglow 2>/dev/null
+perl afterglow*/src/perl/graph/afterglow.pl -tk < all.csv > all.gdf 2>/dev/null
+neato -Tgif -o afterglow.gif < all.csv 2>/dev/null
+
+cp ../port-process.csv . &>/dev/null
+
+for file in all.csv srcip-srcport.csv srcport-dstport.csv dstport-dstip.csv; do
+    if ! [[ $file == *subst.csv ]]; then
+        msg "${file%.*}-subst.csv"
+        python ../port-replace.py csv $testbed $file > ${file%.*}-subst.csv
+    fi
+done
+
+cd - &>/dev/null
+
+xmls=(surface/nmap-*.xml)
+if [[ -e ${xmls[-1]} ]]; then
+    msg "nmap.csv"
+    python port-replace.py nmap $testbed ${xmls[-1]} > graph/nmap.csv
+fi
+
+msg "Finished analyzing traffic"

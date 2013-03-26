@@ -300,6 +300,17 @@ def main():
             subprocess.call(["scp"] + ssh_opts + [host + ":*nmap*", surfacedir], stderr=None)
             subprocess.call(["scp"] + ssh_opts + [host + ":*xml", surfacedir], stderr=None)
             subprocess.call(["scp"] + ssh_opts + [host + ":*surface", surfacedir], stderr=None)
+
+    elif command == "graph":
+        keyfile = testbed + "/" + T["ssh_key"] + ".pem"
+        host = "ubuntu@" + T["elastic_ip"]
+        ssh_opts = ["-o", "UserKnownHostsFile=/dev/null", "-o", "StrictHostKeyChecking=no", "-i", keyfile]
+        subprocess.call(["scp"] + ssh_opts + ["port-process.csv", "traffic-analysis", "port-replace.py", host + ":"], stderr=None, stdout=None)
+        cmdline = [host, "/usr/bin/sudo", "/home/ubuntu/traffic-analysis", testbed, "2"]
+        if options.verbose: cmdline.append("-v")
+        subprocess.call(["ssh"] + ssh_opts + cmdline, stderr=None)
+        subprocess.call(["scp"] + ssh_opts + ["-r", host + ":graph", testbed], stderr=None)
+
     else:
         parser.print_usage()
         error("Unknown command: " + command)
