@@ -238,7 +238,7 @@ configure_node() {
     scp $ssh_opts "${files[@]}" $ssh_dst: 2>/dev/null
 
     # modify default route to connect to the internet via master
-    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh network-setup --client --hostname $node_hostname --client_ip $master_ip" 2>/dev/null
+    ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh network-setup --client --hostname $node_hostname --server_ip $master_ip" 2>/dev/null
 
     # run attack surface analysis before configuration
     ssh $ssh_opts $ssh_dst "sudo bash $verbose_sh surface node $node_hostname" 2>/dev/null
@@ -314,7 +314,7 @@ if [[ -z $node ]]; then
     pids+=($!)
 
     # wait a few seconds to start configuring the slaves
-    sleep 30
+    sleep 60
 
     # Configure slave nodes by recursively calling this script from the
     # master passing --node, the master host/ip and the node's internal
