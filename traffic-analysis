@@ -9,15 +9,16 @@ YELLOW='\033[00;33m'
 
 msg() {
     hostname=$(hostname)
+    script=${0##*/}
     case "$1" in
         error)  echo -ne "$RED"                 >&2
-                echo "$0@$hostname: ${@:2}"     >&2
+                echo "$script@$hostname: ${@:2}"     >&2
                 ;;
         warn)   echo -ne "$YELLOW"              >&2
-                echo "$0@$hostname: ${@:2}"     >&2
+                echo "$script@$hostname: ${@:2}"     >&2
                 ;;
         *)      echo -ne "$GREEN"
-                echo "$0@$hostname: ${@}"
+                echo "$script@$hostname: ${@}"
     esac
 
     # restore normal colors
@@ -42,10 +43,10 @@ runcmd() {
 
 run_tcpdump() {
     seconds=30
-    msg "Capturing packets for $seconds seconds"
-    tcpdump -w capture.pcap &
-    pid=$!
-    sleep $seconds && kill $pid &>/dev/null
+    # msg "Capturing packets for $seconds seconds"
+    tcpdump -w capture.pcap
+    # pid=$!
+    # sleep $seconds && kill $pid &>/dev/null
 }
 
 testbed=$1
@@ -67,21 +68,29 @@ runcmd tar zvxf afterglow-1.6.2.tar.gz
 cd graph
 
 # run capture (60 second max)
-run_tcpdump &
+tcpdump_start=$(date +%s)
+tcpdump -w capture.pcap &
 pid=$!
 
 sleep 2
 
 # create an image and some instances
-msg "Creating OpenStack instances"
 source /root/openrc
+msg "Downloading Cirros image"
 img_id=$(glance image-create --name "cirros-0.3.1-i386" --container-format bare --copy-from http://download.cirros-cloud.net/0.3.1/cirros-0.3.1-i386-disk.img --is-public true | awk '$2 == "id" {print $4}')
+msg "Creating OpenStack instances"
+echo instances: $instances
 for i in {1..$instances}; do
-    img_id=$(nova --no-cache boot --image $img_id --flavor 1 cirros &)
+    instance=$(nova --no-cache boot --image $img_id --flavor 1 cirros &)
     pidnova=$!
     sleep 3
     kill $pidnova &>/dev/null
 done
+
+tcpdump_end=$(date +%s)
+if ((tcpdump_end-tcpdump_start > 60)); then
+    kill $pid
+fi
 
 kill $pid &>/dev/null
 
@@ -110,6 +119,7 @@ for file in all.csv srcip-srcport.csv srcport-dstport.csv dstport-dstip.csv; do
     fi
 done
 
+chmod a+r *
 cd - &>/dev/null
 
 xmls=(surface/nmap-*.xml)
@@ -119,3 +129,4 @@ if [[ -e ${xmls[-1]} ]]; then
 fi
 
 msg "Finished analyzing traffic"
+
